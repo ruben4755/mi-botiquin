@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 # --- 1. CONFIGURACIÓN ---
 st.set_page_config(page_title="Inventario Color-Coded", layout="wide", page_icon="💊")
 
-# Estilo para el parpadeo del símbolo de alerta
+# Estilo para el parpadeo y forzar texto negro
 st.markdown("""
     <style>
     @keyframes blink {
@@ -19,6 +19,13 @@ st.markdown("""
         animation: blink 1s infinite;
         font-size: 1.2rem;
         margin-right: 5px;
+    }
+    /* Forzar que todo el texto dentro de las tarjetas sea negro */
+    .tarjeta-med {
+        color: black !important;
+    }
+    .tarjeta-med b, .tarjeta-med span, .tarjeta-med small {
+        color: black !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -64,7 +71,7 @@ if rows:
 else:
     st.stop()
 
-# --- 3. FUNCIÓN TARJETAS CON COLORES SEMÁFORO ---
+# --- 3. FUNCIÓN TARJETAS ---
 def pintar_tarjeta(fila, idx_excel, key_suffix):
     nombre = fila[col_nom]
     stock = fila[col_stock]
@@ -74,41 +81,39 @@ def pintar_tarjeta(fila, idx_excel, key_suffix):
     hoy = datetime.now()
     alerta_2meses = hoy + timedelta(days=60)
     
-    # Valores por defecto (Verde)
-    bg_color = "#d4edda"  # Verde claro
+    # Lógica de colores (Semáforo)
+    bg_color = "#d4edda"  # Verde (Ok)
     texto_aviso = ""
     icono_alerta = ""
 
     try:
         dt = datetime.strptime(fecha_s, "%Y-%m-%d")
         if dt < hoy:
-            # ROJO y parpadeo
-            bg_color = "#f8d7da"
+            bg_color = "#f8d7da" # Rojo
             icono_alerta = '<span class="blink-icon">⚠</span>'
             texto_aviso = "<b>¡CADUCADO!</b>"
         elif dt <= alerta_2meses:
-            # AMARILLO
-            bg_color = "#fff3cd"
-            texto_aviso = "<b>Próximo a caducar (2 meses)</b>"
+            bg_color = "#fff3cd" # Amarillo
+            texto_aviso = "<b>Próximo a caducar</b>"
     except:
         pass
 
     with st.container():
         c1, c2, c3, c4 = st.columns([5, 1, 1, 1])
+        # Aplicamos la clase 'tarjeta-med' para asegurar el texto negro
         info = f"""
-        <div style="background-color:{bg_color}; padding:12px; border-radius:8px; color:#155724; border: 1px solid rgba(0,0,0,0.1); margin-bottom:10px;">
+        <div class="tarjeta-med" style="background-color:{bg_color}; padding:12px; border-radius:8px; border: 1px solid rgba(0,0,0,0.1); margin-bottom:10px;">
             <div style="display:flex; align-items:center;">
                 {icono_alerta} 📍 <b>{ubicacion}</b>
             </div>
             <div style="margin-top:5px;">
-                <span style="font-size:1.1rem;"><b>{nombre}</b></span> | Stock: {stock} <br>
-                <small>Vence: {fecha_s} {texto_aviso}</small>
+                <span style="font-size:1.1rem;"><b>{nombre}</b></span> | Stock: {stock} unidades <br>
+                <small>Fecha Vence: {fecha_s} {texto_aviso}</small>
             </div>
         </div>
         """
         c1.markdown(info, unsafe_allow_html=True)
         
-        # Botones
         if c2.button("＋", key=f"p_{idx_excel}_{key_suffix}"):
             worksheet.update_cell(idx_excel, headers.index(col_stock)+1, int(stock)+1)
             st.rerun()
@@ -132,24 +137,25 @@ if seleccion:
 
 # PESTAÑAS
 t_alerta, t_todos, t_vitrina, t_armario = st.tabs([
-    "⚠ Alertas", 
-    "📋 Todo", 
+    "⚠ Alertas (1 mes)", 
+    "📋 Todo el Inventario", 
     "📁 Vitrina", 
     "📁 Armario"
 ])
 
 with t_alerta:
     hoy = datetime.now()
-    limite = hoy + timedelta(days=60)
+    limite_1mes = hoy + timedelta(days=30) # Solo alertas de 1 mes
     encontrados = 0
     for i, fila in df.iterrows():
         try:
             dt = datetime.strptime(fila[col_cad], "%Y-%m-%d")
-            if dt <= limite:
+            # Mostramos en alertas si ya caducó O si caduca en menos de 30 días
+            if dt <= limite_1mes:
                 pintar_tarjeta(fila, i + 2, "alerta")
                 encontrados += 1
         except: pass
-    if encontrados == 0: st.success("No hay alertas de caducidad.")
+    if encontrados == 0: st.success("No hay medicamentos que caduquen en menos de 1 mes.")
 
 with t_todos:
     for i, fila in df.iterrows():
