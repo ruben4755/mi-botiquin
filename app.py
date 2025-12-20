@@ -9,28 +9,25 @@ st.set_page_config(page_title="Inventario Seguro", layout="wide")
 
 @st.cache_resource
 def obtener_cliente():
-    scope = ["https://www.googleapis.com/auth/spreadsheets"]
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
-    return gspread.authorize(creds)
+    try:
+        scope = ["https://www.googleapis.com/auth/spreadsheets"]
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+        return gspread.authorize(creds)
+    except Exception as e:
+        st.error(f"Error en credenciales: {e}")
+        return None
 
-@st.cache_data(ttl=5)
-def cargar_datos_seguro():
+def cargar_datos_vivos():
     try:
         client = obtener_cliente()
         sh = client.open_by_url(st.secrets["url_excel"])
         worksheet = sh.get_worksheet(0)
+        # Leemos todo como una lista de listas
         rows = worksheet.get_all_values()
-        
-        if len(rows) <= 1: # Solo hay encabezados o está vacío
-            return pd.DataFrame(columns=["Nombre", "Stock", "Caducidad", "Ubicacion"]), worksheet
-        
-        # Crear DataFrame asegurando que los nombres de columnas son limpios
-        df_temp = pd.DataFrame(rows[1:], columns=rows[0])
-        df_temp.columns = [c.strip() for c in df_temp.columns]
-        return df_temp, worksheet
+        return rows, worksheet
     except Exception as e:
-        st.error(f"Error al cargar datos: {e}")
-        return pd.DataFrame(), None
+        st.error(f"Error de conexión: {e}")
+        return None, None
 
 # --- 2. LOGIN ---
 if "user" not in st.session_state:
@@ -44,78 +41,85 @@ if "user" not in st.session_state:
                 st.rerun()
     st.stop()
 
-df, worksheet = cargar_datos_seguro()
+# --- 3. PROCESAMIENTO DE DATOS ---
+rows, worksheet = cargar_datos_vivos()
 
-# --- 3. BARRA LATERAL ---
+if rows:
+    # Creamos el DataFrame
+    headers = [str(h).strip() for h in rows[0]]
+    df = pd.DataFrame(rows[1:], columns=headers)
+    
+    # Buscamos los nombres de las columnas reales (por si tienen tildes o espacios)
+    col_nom = next((c for c in df.columns if "Nom" in c), None)
+    col_stock = next((c for c in df.columns if "Sto" in c or "Cant" in c), None)
+    col_cad = next((c for c in df.columns if "Cad" in c or "Fec" in c), None)
+    col_ubi = next((c for c in df.columns if "Ubi" in c), None)
+else:
+    st.warning("El Excel parece vacío.")
+    st.stop()
+
+# --- 4. BARRA LATERAL ---
 with st.sidebar:
     st.header("➕ Registro")
-    with st.form("registro", clear_on_submit=True):
-        nom = st.text_input("Nombre")
-        cant = st.number_input("Cantidad", min_value=0, step=1)
-        fec = st.date_input("Caducidad")
-        ubi = st.selectbox("Ubicación", ["Medicación de vitrina", "Medicación de armario"])
+    with st.form("add"):
+        n = st.text_input("Nombre")
+        s = st.number_input("Stock", min_value=0, step=1)
+        c = st.date_input("Caducidad")
+        u = st.selectbox("Ubicación", ["Medicación de vitrina", "Medicación de armario"])
         if st.form_submit_button("Guardar"):
-            if nom and worksheet:
-                worksheet.append_row([nom, int(cant), str(fec), ubi, st.session_state["user"]])
-                st.cache_data.clear()
-                st.rerun()
+            worksheet.append_row([n, int(s), str(c), u, st.session_state["user"]])
+            st.cache_data.clear()
+            st.rerun()
 
-# --- 4. LISTADO ---
+# --- 5. LISTADO ---
 st.title("💊 Inventario de Medicación")
-tab1, tab2 = st.tabs(["📁 Vitrina", "📁 Armario"])
+t1, t2 = st.tabs(["📁 Vitrina", "📁 Armario"])
 
-def pintar_seccion(ubi_filtro):
-    # Verificación de seguridad para evitar AttributeError
-    if df is None or df.empty or "Ubicacion" not in df.columns:
-        st.info("No hay datos registrados en esta sección.")
+def mostrar(filtro, pestaña):
+    # Si no encontramos la columna de ubicación, no podemos filtrar
+    if not col_ubi:
+        pestaña.error("No encuentro la columna 'Ubicacion' en tu Excel.")
         return
 
-    items = df[df["Ubicacion"] == ubi_filtro]
+    items = df[df[col_ubi] == filtro]
     hoy = datetime.now()
-    proximo = hoy + timedelta(days=30)
+    alerta = hoy + timedelta(days=30)
+
+    if items.empty:
+        pestaña.write("No hay nada aquí.")
+        return
 
     for i, fila in items.iterrows():
-        # Calculamos la fila real del Excel (i es el índice del DataFrame original)
         idx_excel = i + 2
-        
-        # Extraer datos con seguridad
-        nombre_med = fila.get('Nombre', 'Sin nombre')
-        stock_med = fila.get('Stock', '0')
-        f_cad = str(fila.get('Caducidad', ''))
+        nombre = fila[col_nom] if col_nom else "Desconocido"
+        stock = fila[col_stock] if col_stock else "0"
+        fecha_s = fila[col_cad] if col_cad else ""
         
         bg = "#f0f2f6"
-        txt_aviso = ""
-        
-        if f_cad:
-            try:
-                dt = datetime.strptime(f_cad, "%Y-%m-%d")
-                if dt <= hoy: bg, txt_aviso = "#ffcccc", "🚨 CADUCADO"
-                elif dt <= proximo: bg, txt_aviso = "#ffe5b4", "⏳ CADUCA PRONTO"
-            except: pass
+        txt = ""
+        try:
+            dt = datetime.strptime(fecha_s, "%Y-%m-%d")
+            if dt <= hoy: bg, txt = "#ffcccc", "🚨 CADUCADO"
+            elif dt <= alerta: bg, txt = "#ffe5b4", "⏳ CADUCA PRONTO"
+        except: pass
 
-        with st.container():
-            c_info, c_plus, c_min, c_del = st.columns([6, 1, 1, 1])
-            with c_info:
-                st.markdown(f"""<div style='background:{bg}; padding:8px; border-radius:5px; color:black; margin-bottom:5px; border: 1px solid #ddd;'>
-                <b>{nombre_med}</b> (Stock: {stock_med}) {txt_aviso}<br>
-                <small>Vence: {f_cad}</small></div>""", unsafe_allow_html=True)
+        with pestaña.container():
+            c1, c2, c3, c4 = st.columns([5, 1, 1, 1])
+            c1.markdown(f"<div style='background:{bg}; padding:10px; border-radius:5px; color:black;'><b>{nombre}</b> (Stock: {stock}) {txt}<br><small>Vence: {fecha_s}</small></div>", unsafe_allow_html=True)
+            
+            # Botones
+            if c2.button("＋", key=f"p{idx_excel}"):
+                # Buscamos el número de la columna de Stock (A=1, B=2...)
+                col_idx_stock = headers.index(col_stock) + 1
+                worksheet.update_cell(idx_excel, col_idx_stock, int(stock) + 1)
+                st.rerun()
+            if c3.button("－", key=f"m{idx_excel}"):
+                col_idx_stock = headers.index(col_stock) + 1
+                worksheet.update_cell(idx_excel, col_idx_stock, max(0, int(stock) - 1))
+                st.rerun()
+            if c4.button("🗑", key=f"d{idx_excel}"):
+                worksheet.delete_rows(idx_excel)
+                st.rerun()
 
-            with c_plus:
-                if st.button("＋", key=f"p{idx_excel}"):
-                    worksheet.update_cell(idx_excel, 2, int(stock_med) + 1)
-                    st.cache_data.clear()
-                    st.rerun()
-            with c_min:
-                if st.button("－", key=f"m{idx_excel}"):
-                    val = max(0, int(stock_med) - 1)
-                    worksheet.update_cell(idx_excel, 2, val)
-                    st.cache_data.clear()
-                    st.rerun()
-            with c_del:
-                if st.button("🗑", key=f"d{idx_excel}"):
-                    worksheet.delete_rows(idx_excel)
-                    st.cache_data.clear()
-                    st.rerun()
-
-with tab1: pintar_seccion("Medicación de vitrina")
-with tab2: pintar_seccion("Medicación de armario")
+mostrar("Medicación de vitrina", t1)
+mostrar("Medicación de armario", t2)
