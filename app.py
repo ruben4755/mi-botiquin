@@ -13,22 +13,24 @@ def obtener_cliente():
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
     return gspread.authorize(creds)
 
-@st.cache_data(ttl=10)
+@st.cache_data(ttl=5)
 def cargar_datos_seguro():
-    client = obtener_cliente()
-    sh = client.open_by_url(st.secrets["url_excel"])
-    worksheet = sh.get_worksheet(0)
-    
-    # CAMBIO CLAVE: Leemos los valores directos, no los registros por nombre
-    # Esto evita el error de nombres duplicados
-    rows = worksheet.get_all_values()
-    if not rows:
-        return pd.DataFrame(), worksheet
-    
-    # La primera fila son los encabezados, el resto son los datos
-    df_temp = pd.DataFrame(rows[1:], columns=rows[0])
-    df_temp.columns = df_temp.columns.str.strip()
-    return df_temp, worksheet
+    try:
+        client = obtener_cliente()
+        sh = client.open_by_url(st.secrets["url_excel"])
+        worksheet = sh.get_worksheet(0)
+        rows = worksheet.get_all_values()
+        
+        if len(rows) <= 1: # Solo hay encabezados o está vacío
+            return pd.DataFrame(columns=["Nombre", "Stock", "Caducidad", "Ubicacion"]), worksheet
+        
+        # Crear DataFrame asegurando que los nombres de columnas son limpios
+        df_temp = pd.DataFrame(rows[1:], columns=rows[0])
+        df_temp.columns = [c.strip() for c in df_temp.columns]
+        return df_temp, worksheet
+    except Exception as e:
+        st.error(f"Error al cargar datos: {e}")
+        return pd.DataFrame(), None
 
 # --- 2. LOGIN ---
 if "user" not in st.session_state:
@@ -53,58 +55,60 @@ with st.sidebar:
         fec = st.date_input("Caducidad")
         ubi = st.selectbox("Ubicación", ["Medicación de vitrina", "Medicación de armario"])
         if st.form_submit_button("Guardar"):
-            if nom:
-                with st.spinner("Guardando..."):
-                    worksheet.append_row([nom, int(cant), str(fec), ubi, st.session_state["user"]])
-                    st.cache_data.clear()
-                    st.rerun()
+            if nom and worksheet:
+                worksheet.append_row([nom, int(cant), str(fec), ubi, st.session_state["user"]])
+                st.cache_data.clear()
+                st.rerun()
 
 # --- 4. LISTADO ---
 st.title("💊 Inventario de Medicación")
 tab1, tab2 = st.tabs(["📁 Vitrina", "📁 Armario"])
 
 def pintar_seccion(ubi_filtro):
-    if df.empty:
-        st.info("No hay datos todavía.")
+    # Verificación de seguridad para evitar AttributeError
+    if df is None or df.empty or "Ubicacion" not in df.columns:
+        st.info("No hay datos registrados en esta sección.")
         return
 
-    # Filtramos por la columna Ubicacion
     items = df[df["Ubicacion"] == ubi_filtro]
     hoy = datetime.now()
     proximo = hoy + timedelta(days=30)
 
     for i, fila in items.iterrows():
-        # i es el índice del DataFrame, que coincide con la fila del Excel - 2
+        # Calculamos la fila real del Excel (i es el índice del DataFrame original)
         idx_excel = i + 2
         
-        f_cad = str(fila['Caducidad'])
+        # Extraer datos con seguridad
+        nombre_med = fila.get('Nombre', 'Sin nombre')
+        stock_med = fila.get('Stock', '0')
+        f_cad = str(fila.get('Caducidad', ''))
+        
         bg = "#f0f2f6"
         txt_aviso = ""
-        try:
-            dt = datetime.strptime(f_cad, "%Y-%m-%d")
-            if dt <= hoy: bg, txt_aviso = "#ffcccc", "🚨 CADUCADO"
-            elif dt <= proximo: bg, txt_aviso = "#ffe5b4", "⏳ 1 MES"
-        except: pass
+        
+        if f_cad:
+            try:
+                dt = datetime.strptime(f_cad, "%Y-%m-%d")
+                if dt <= hoy: bg, txt_aviso = "#ffcccc", "🚨 CADUCADO"
+                elif dt <= proximo: bg, txt_aviso = "#ffe5b4", "⏳ CADUCA PRONTO"
+            except: pass
 
         with st.container():
             c_info, c_plus, c_min, c_del = st.columns([6, 1, 1, 1])
-            
             with c_info:
-                st.markdown(f"""<div style='background:{bg}; padding:8px; border-radius:5px; color:black; margin-bottom:5px;'>
-                <b>{fila['Nombre']}</b> (Stock: {fila['Stock']}) {txt_aviso}<br>
+                st.markdown(f"""<div style='background:{bg}; padding:8px; border-radius:5px; color:black; margin-bottom:5px; border: 1px solid #ddd;'>
+                <b>{nombre_med}</b> (Stock: {stock_med}) {txt_aviso}<br>
                 <small>Vence: {f_cad}</small></div>""", unsafe_allow_html=True)
 
             with c_plus:
                 if st.button("＋", key=f"p{idx_excel}"):
-                    # Columna 2 es el Stock
-                    nuevo_val = int(fila['Stock']) + 1
-                    worksheet.update_cell(idx_excel, 2, nuevo_val)
+                    worksheet.update_cell(idx_excel, 2, int(stock_med) + 1)
                     st.cache_data.clear()
                     st.rerun()
             with c_min:
                 if st.button("－", key=f"m{idx_excel}"):
-                    nuevo_val = max(0, int(fila['Stock']) - 1)
-                    worksheet.update_cell(idx_excel, 2, nuevo_val)
+                    val = max(0, int(stock_med) - 1)
+                    worksheet.update_cell(idx_excel, 2, val)
                     st.cache_data.clear()
                     st.rerun()
             with c_del:
