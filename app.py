@@ -5,7 +5,7 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 
 # --- 1. CONFIGURACIÓN ---
-st.set_page_config(page_title="Inventario Rápido", layout="wide")
+st.set_page_config(page_title="Inventario Inteligente", layout="wide", page_icon="💊")
 
 @st.cache_resource
 def obtener_cliente():
@@ -61,7 +61,7 @@ def pintar_tarjeta(fila, idx_excel, key_suffix):
     try:
         dt = datetime.strptime(fecha_s, "%Y-%m-%d")
         if dt <= hoy: bg, txt = "#ffcccc", "🚨 CADUCADO"
-        elif dt <= alerta: bg, txt = "#ffe5b4", "⏳ PRÓXIMO"
+        elif dt <= alerta: bg, txt = "#ffe5b4", "⏳ PRÓXIMO A CADUCAR"
     except: pass
 
     with st.container():
@@ -83,46 +83,63 @@ def pintar_tarjeta(fila, idx_excel, key_suffix):
 st.title("💊 Inventario de Medicación")
 
 # BUSCADOR
-st.subheader("🔍 Buscador Instantáneo")
 opciones = [""] + sorted(df[col_nom].unique().tolist())
-seleccion = st.selectbox("Escribe el nombre del medicamento...", opciones, index=0)
-
+seleccion = st.selectbox("🔍 Buscar medicamento...", opciones, index=0)
 if seleccion:
-    resultados = df[df[col_nom] == seleccion]
-    for i, fila in resultados.iterrows():
+    for i, fila in df[df[col_nom] == seleccion].iterrows():
         pintar_tarjeta(fila, i + 2, "search")
     st.divider()
 
-# PESTAÑAS
-t1, t2 = st.tabs(["📁 Vitrina", "📁 Armario"])
+# --- NUEVA ESTRUCTURA DE PESTAÑAS ---
+t_alerta, t_todos, t_vitrina, t_armario = st.tabs([
+    "⚠ Caducan en 1 mes", 
+    "📋 Todo el Inventario", 
+    "📁 Vitrina", 
+    "📁 Armario"
+])
 
-with t1:
+# Lógica para la pestaña de alertas (Caducan pronto)
+with t_alerta:
+    hoy = datetime.now()
+    proximo_mes = hoy + timedelta(days=30)
+    cont_alertas = 0
+    
+    for i, fila in df.iterrows():
+        try:
+            dt = datetime.strptime(fila[col_cad], "%Y-%m-%d")
+            if dt <= proximo_mes:
+                pintar_tarjeta(fila, i + 2, "alerta")
+                cont_alertas += 1
+        except: pass
+    
+    if cont_alertas == 0:
+        st.success("No hay medicamentos que caduquen en los próximos 30 días.")
+
+# Lógica para mostrar TODO
+with t_todos:
+    for i, fila in df.iterrows():
+        pintar_tarjeta(fila, i + 2, "todos")
+
+# Lógica por ubicación
+with t_vitrina:
     items = df[df[col_ubi] == "Medicación de vitrina"]
     for i, fila in items.iterrows():
-        pintar_tarjeta(fila, i + 2, "tab1")
+        pintar_tarjeta(fila, i + 2, "vit")
 
-with t2:
+with t_armario:
     items = df[df[col_ubi] == "Medicación de armario"]
     for i, fila in items.iterrows():
-        pintar_tarjeta(fila, i + 2, "tab2")
+        pintar_tarjeta(fila, i + 2, "arm")
 
-# --- 5. BARRA LATERAL (CON LIMPIEZA AUTOMÁTICA) ---
+# BARRA LATERAL (LIMPIA AL GUARDAR)
 with st.sidebar:
     st.header("➕ Nuevo Registro")
-    # El parámetro clear_on_submit=True es el que limpia el formulario al guardar
     with st.form("add_form", clear_on_submit=True):
         n = st.text_input("Nombre")
         s = st.number_input("Stock", min_value=0, step=1)
         c = st.date_input("Caducidad")
         u = st.selectbox("Ubicación", ["Medicación de vitrina", "Medicación de armario"])
-        
-        enviar = st.form_submit_button("Guardar Medicamento")
-        
-        if enviar:
+        if st.form_submit_button("Guardar"):
             if n:
-                with st.spinner("Guardando..."):
-                    worksheet.append_row([n, int(s), str(c), u, st.session_state["user"]])
-                    st.success(f"✅ {n} guardado correctamente")
-                    st.rerun()
-            else:
-                st.error("El nombre es obligatorio")
+                worksheet.append_row([n.capitalize(), int(s), str(c), u, st.session_state["user"]])
+                st.rerun()
