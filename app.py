@@ -5,7 +5,7 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 
 # --- 1. CONFIGURACIÓN ---
-st.set_page_config(page_title="Inventario Real-Time", layout="wide")
+st.set_page_config(page_title="Inventario Instantáneo", layout="wide")
 
 @st.cache_resource
 def obtener_cliente():
@@ -24,8 +24,7 @@ def cargar_datos_vivos():
         worksheet = sh.get_worksheet(0)
         rows = worksheet.get_all_values()
         return rows, worksheet
-    except Exception as e:
-        st.error(f"Error de conexión: {e}")
+    except:
         return None, None
 
 # --- 2. LOGIN ---
@@ -89,20 +88,35 @@ def pintar_tarjeta(fila, idx_excel, key_suffix):
 # --- 5. INTERFAZ ---
 st.title("💊 Inventario Real-Time")
 
-# BUSCADOR SIN FORMULARIO (PARA TIEMPO REAL)
-busqueda = st.text_input("🔍 Escribe para buscar...", value="", placeholder="Escribe un nombre...").strip().lower()
+# --- EL CAMBIO CLAVE ESTÁ AQUÍ ---
+# Usamos un contenedor vacío para que el buscador siempre esté arriba y reaccione
+if 'search_term' not in st.session_state:
+    st.session_state.search_term = ""
 
-if busqueda:
-    # Filtro inmediato
-    resultados = df[df[col_nom].str.lower().str.contains(busqueda, na=False)]
+def update_search():
+    st.session_state.search_term = st.session_state.search_input
+
+# El widget manda la señal de actualizar en cada cambio
+busqueda = st.text_input(
+    "🔍 Escribe para buscar (instantáneo)...", 
+    key="search_input", 
+    on_change=update_search
+).strip().lower()
+
+# Usamos el valor del estado de sesión para filtrar
+term = st.session_state.search_term.lower()
+
+if term:
+    resultados = df[df[col_nom].str.lower().str.contains(term, na=False)]
     if not resultados.empty:
+        st.subheader(f"Resultados para: {term}")
         for i, fila in resultados.iterrows():
             pintar_tarjeta(fila, i + 2, "search")
     else:
         st.write("No hay coincidencias.")
     st.divider()
 
-# PESTAÑAS
+# --- PESTAÑAS ---
 t1, t2 = st.tabs(["📁 Vitrina", "📁 Armario"])
 
 with t1:
