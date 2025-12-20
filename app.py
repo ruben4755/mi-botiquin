@@ -28,84 +28,86 @@ if "user" not in st.session_state:
     st.stop()
 
 worksheet = conectar_google()
-data = worksheet.get_all_records()
-df = pd.DataFrame(data)
-df.columns = df.columns.str.strip()
 
-# --- 3. BARRA LATERAL ---
+# --- 3. CARGA DE DATOS LIMPIA ---
+# Obtenemos todos los datos y eliminamos filas que no tengan nombre (las que dan error)
+try:
+    data = worksheet.get_all_records()
+    df_sucio = pd.DataFrame(data)
+    df_sucio.columns = df_sucio.columns.str.strip()
+    # Filtramos para que solo aparezcan filas donde la columna "Nombre" no esté vacía
+    df = df_sucio[df_sucio['Nombre'] != ""].copy()
+except Exception as e:
+    st.error(f"Error al leer datos: {e}")
+    df = pd.DataFrame()
+
+# --- 4. BARRA LATERAL (AÑADIR) ---
 with st.sidebar:
     st.header("➕ Nuevo Registro")
     with st.form("registro", clear_on_submit=True):
         nom = st.text_input("Nombre")
         cant = st.number_input("Cantidad", min_value=0, step=1)
-        fec = st.date_input("Fecha de caducidad", min_value=datetime.now())
+        fec = st.date_input("Fecha de caducidad")
         ubi = st.selectbox("Ubicación", ["Medicación de vitrina", "Medicación de armario"])
         if st.form_submit_button("Guardar"):
-            worksheet.append_row([nom, int(cant), str(fec), ubi, st.session_state["user"]])
-            st.success("Guardado")
-            st.rerun()
+            if nom:
+                worksheet.append_row([nom, int(cant), str(fec), ubi, st.session_state["user"]])
+                st.success("Guardado")
+                st.rerun()
 
-# --- 4. LÓGICA DE ALERTAS Y LISTADO ---
-st.title("💊 Gestión Inteligente de Stock")
-
+# --- 5. LISTADO Y ALERTAS ---
+st.title("💊 Gestión de Medicación")
 tab1, tab2 = st.tabs(["📁 Vitrina", "📁 Armario"])
 
 def pintar_inventario(nombre_filtro):
     col_ubi = [c for c in df.columns if "Ubicacion" in c or "Ubicación" in c]
     if not df.empty and col_ubi:
+        # Importante: filtramos los items pero guardamos su índice original para borrar
         items = df[df[col_ubi[0]] == nombre_filtro]
         hoy = datetime.now()
         un_mes_despues = hoy + timedelta(days=30)
 
         for i, fila in items.iterrows():
-            # Lógica de fecha para avisos
-            fecha_cad = str(fila.get('Caducidad', ''))
+            # Lógica de colores por caducidad
             color_fondo = "#f0f2f6"
             aviso_texto = ""
-            
             try:
-                dt_cad = datetime.strptime(fecha_cad, "%Y-%m-%d")
+                dt_cad = datetime.strptime(str(fila['Caducidad']), "%Y-%m-%d")
                 if dt_cad <= hoy:
-                    color_fondo = "#ffcccc" # Rojo si ya caducó
-                    aviso_texto = "⚠ ¡CADUCADO!"
+                    color_fondo = "#ffcccc"
+                    aviso_texto = "⚠ CADUCADO"
                 elif dt_cad <= un_mes_despues:
-                    color_fondo = "#ffe5b4" # Naranja si caduca pronto
-                    aviso_texto = "⏳ Caduca en menos de 1 mes"
-            except:
-                pass
+                    color_fondo = "#ffe5b4"
+                    aviso_texto = "⏳ Caduca pronto"
+            except: pass
 
-            # Diseño del Medicamento
             with st.container():
                 st.markdown(f"""
-                    <div style="background-color:{color_fondo}; padding:15px; border-radius:10px; border-left: 6px solid #007bff; margin-bottom:5px; color: black;">
-                        <div style="display: flex; justify-content: space-between;">
-                            <span><b>{fila['Nombre']}</b></span>
-                            <span style="color:red; font-weight:bold;">{aviso_texto}</span>
-                        </div>
-                        <div style="font-size:13px;">Stock actual: {fila['Stock']} | Vence: {fila['Caducidad']}</div>
+                    <div style="background-color:{color_fondo}; padding:10px; border-radius:10px; margin-bottom:5px; color: black;">
+                        <b>{fila['Nombre']}</b> | Stock: {fila['Stock']} {aviso_texto}<br>
+                        <small>Vence: {fila['Caducidad']}</small>
                     </div>
                 """, unsafe_allow_html=True)
                 
-                # Botones de gestión rápida (+1, -1, Eliminar)
-                c1, c2, c3, c4 = st.columns([1, 1, 3, 2])
+                c1, c2, c3 = st.columns([1, 1, 2])
+                # El +2 es porque Excel empieza en 1 y tiene cabecera
+                fila_excel = i + 2 
+                
                 with c1:
                     if st.button("➕", key=f"add_{i}"):
-                        worksheet.update_cell(i + 2, 2, int(fila['Stock']) + 1)
+                        worksheet.update_cell(fila_excel, 2, int(fila['Stock']) + 1)
                         st.rerun()
                 with c2:
                     if st.button("➖", key=f"min_{i}"):
-                        nuevo_valor = max(0, int(fila['Stock']) - 1)
-                        worksheet.update_cell(i + 2, 2, nuevo_valor)
+                        worksheet.update_cell(fila_excel, 2, max(0, int(fila['Stock']) - 1))
                         st.rerun()
-                with c4:
+                with c3:
                     if st.button("🗑 Borrar", key=f"del_{i}"):
-                        worksheet.delete_rows(i + 2)
+                        worksheet.delete_rows(fila_excel)
                         st.rerun()
                 st.write("---")
     else:
-        st.write("Sin datos.")
+        st.write("Sección vacía.")
 
-with tab1:
-    pintar_inventario("Medicación de vitrina")
-with tab2:
-    pintar_inventario("Medicación de armario")
+with tab1: pintar_inventario("Medicación de vitrina")
+with tab2: pintar_inventario("Medicación de armario")
