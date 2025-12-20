@@ -5,7 +5,23 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 
 # --- 1. CONFIGURACIÓN ---
-st.set_page_config(page_title="Inventario Inteligente", layout="wide", page_icon="💊")
+st.set_page_config(page_title="Inventario Color-Coded", layout="wide", page_icon="💊")
+
+# Estilo para el parpadeo del símbolo de alerta
+st.markdown("""
+    <style>
+    @keyframes blink {
+        0% { opacity: 1; }
+        50% { opacity: 0.1; }
+        100% { opacity: 1; }
+    }
+    .blink-icon {
+        animation: blink 1s infinite;
+        font-size: 1.2rem;
+        margin-right: 5px;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 @st.cache_resource
 def obtener_cliente():
@@ -48,7 +64,7 @@ if rows:
 else:
     st.stop()
 
-# --- 3. FUNCIÓN TARJETAS ---
+# --- 3. FUNCIÓN TARJETAS CON COLORES SEMÁFORO ---
 def pintar_tarjeta(fila, idx_excel, key_suffix):
     nombre = fila[col_nom]
     stock = fila[col_stock]
@@ -56,19 +72,43 @@ def pintar_tarjeta(fila, idx_excel, key_suffix):
     ubicacion = fila[col_ubi]
     
     hoy = datetime.now()
-    alerta = hoy + timedelta(days=30)
-    bg, txt = "#f0f2f6", ""
+    alerta_2meses = hoy + timedelta(days=60)
+    
+    # Valores por defecto (Verde)
+    bg_color = "#d4edda"  # Verde claro
+    texto_aviso = ""
+    icono_alerta = ""
+
     try:
         dt = datetime.strptime(fecha_s, "%Y-%m-%d")
-        if dt <= hoy: bg, txt = "#ffcccc", "🚨 CADUCADO"
-        elif dt <= alerta: bg, txt = "#ffe5b4", "⏳ PRÓXIMO A CADUCAR"
-    except: pass
+        if dt < hoy:
+            # ROJO y parpadeo
+            bg_color = "#f8d7da"
+            icono_alerta = '<span class="blink-icon">⚠</span>'
+            texto_aviso = "<b>¡CADUCADO!</b>"
+        elif dt <= alerta_2meses:
+            # AMARILLO
+            bg_color = "#fff3cd"
+            texto_aviso = "<b>Próximo a caducar (2 meses)</b>"
+    except:
+        pass
 
     with st.container():
         c1, c2, c3, c4 = st.columns([5, 1, 1, 1])
-        info = f"📍 <b>{ubicacion}</b><br><b>{nombre}</b> (Stock: {stock}) {txt}<br><small>Vence: {fecha_s}</small>"
-        c1.markdown(f"<div style='background:{bg}; padding:10px; border-radius:5px; color:black; margin-bottom:5px; border-left: 5px solid #007bff;'>{info}</div>", unsafe_allow_html=True)
+        info = f"""
+        <div style="background-color:{bg_color}; padding:12px; border-radius:8px; color:#155724; border: 1px solid rgba(0,0,0,0.1); margin-bottom:10px;">
+            <div style="display:flex; align-items:center;">
+                {icono_alerta} 📍 <b>{ubicacion}</b>
+            </div>
+            <div style="margin-top:5px;">
+                <span style="font-size:1.1rem;"><b>{nombre}</b></span> | Stock: {stock} <br>
+                <small>Vence: {fecha_s} {texto_aviso}</small>
+            </div>
+        </div>
+        """
+        c1.markdown(info, unsafe_allow_html=True)
         
+        # Botones
         if c2.button("＋", key=f"p_{idx_excel}_{key_suffix}"):
             worksheet.update_cell(idx_excel, headers.index(col_stock)+1, int(stock)+1)
             st.rerun()
@@ -90,48 +130,40 @@ if seleccion:
         pintar_tarjeta(fila, i + 2, "search")
     st.divider()
 
-# --- NUEVA ESTRUCTURA DE PESTAÑAS ---
+# PESTAÑAS
 t_alerta, t_todos, t_vitrina, t_armario = st.tabs([
-    "⚠ Caducan en 1 mes", 
-    "📋 Todo el Inventario", 
+    "⚠ Alertas", 
+    "📋 Todo", 
     "📁 Vitrina", 
     "📁 Armario"
 ])
 
-# Lógica para la pestaña de alertas (Caducan pronto)
 with t_alerta:
     hoy = datetime.now()
-    proximo_mes = hoy + timedelta(days=30)
-    cont_alertas = 0
-    
+    limite = hoy + timedelta(days=60)
+    encontrados = 0
     for i, fila in df.iterrows():
         try:
             dt = datetime.strptime(fila[col_cad], "%Y-%m-%d")
-            if dt <= proximo_mes:
+            if dt <= limite:
                 pintar_tarjeta(fila, i + 2, "alerta")
-                cont_alertas += 1
+                encontrados += 1
         except: pass
-    
-    if cont_alertas == 0:
-        st.success("No hay medicamentos que caduquen en los próximos 30 días.")
+    if encontrados == 0: st.success("No hay alertas de caducidad.")
 
-# Lógica para mostrar TODO
 with t_todos:
     for i, fila in df.iterrows():
         pintar_tarjeta(fila, i + 2, "todos")
 
-# Lógica por ubicación
 with t_vitrina:
-    items = df[df[col_ubi] == "Medicación de vitrina"]
-    for i, fila in items.iterrows():
+    for i, fila in df[df[col_ubi] == "Medicación de vitrina"].iterrows():
         pintar_tarjeta(fila, i + 2, "vit")
 
 with t_armario:
-    items = df[df[col_ubi] == "Medicación de armario"]
-    for i, fila in items.iterrows():
+    for i, fila in df[df[col_ubi] == "Medicación de armario"].iterrows():
         pintar_tarjeta(fila, i + 2, "arm")
 
-# BARRA LATERAL (LIMPIA AL GUARDAR)
+# SIDEBAR
 with st.sidebar:
     st.header("➕ Nuevo Registro")
     with st.form("add_form", clear_on_submit=True):
