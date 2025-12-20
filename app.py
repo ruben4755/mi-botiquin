@@ -1,44 +1,40 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
+import os
 
-# 1. CONFIGURACIÓN DE PÁGINA
-st.set_page_config(page_title="Mi Botiquín Seguro", layout="wide")
+st.set_page_config(page_title="Inventario Compartido Pro", layout="wide")
 
-# 2. FUNCIÓN DE SEGURIDAD
+# --- SISTEMA DE ACCESO ---
 def check_password():
-    if "password_correct" not in st.session_state:
-        st.session_state["password_correct"] = False
+    if "user" not in st.session_state:
+        st.title("🔒 Acceso Compartido - Rendimiento")
+        u_input = st.text_input("Tu Nombre")
+        p_input = st.text_input("Contraseña", type="password")
+        
+        if st.button("Acceder al Panel"):
+            user_secrets = st.secrets.get("users", {})
+            if u_input in user_secrets and p_input == user_secrets[u_input]:
+                st.session_state["user"] = u_input
+                st.rerun()
+            else:
+                st.error("❌ Usuario o contraseña no válidos")
+        return False
+    return True
 
-    if st.session_state["password_correct"]:
-        return True
-
-    # Pantalla de bloqueo
-    st.title("🔒 Acceso Restringido")
-    password_input = st.text_input("Introduce la contraseña del botiquín:", type="password")
-    
-    if st.button("Entrar"):
-        # Compara con lo que pusiste en el panel 'Secrets' de Streamlit
-        if password_input == st.secrets["password"]:
-            st.session_state["password_correct"] = True
-            st.rerun()
-        else:
-            st.error("❌ Contraseña incorrecta")
-    return False
-
-# Si no pasa la contraseña, la app se para aquí
 if not check_password():
     st.stop()
 
-# --- 3. CÓDIGO DE LA APLICACIÓN (Solo se ve si la clave es correcta) ---
-
+# --- GESTIÓN DE DATOS ÚNICA PARA TODOS ---
 def cargar_datos():
-    try:
-        df = pd.read_csv("inventario.csv")
-        df['Caducidad'] = pd.to_datetime(df['Caducidad']).dt.date
-        return df
-    except:
-        return pd.DataFrame(columns=["Nombre", "Stock", "Caducidad", "Notas"])
+    if os.path.exists("inventario.csv"):
+        try:
+            df = pd.read_csv("inventario.csv")
+            df['Caducidad'] = pd.to_datetime(df['Caducidad']).dt.date
+            return df
+        except:
+            return pd.DataFrame(columns=["Nombre", "Stock", "Caducidad", "Ultimo_Cambio"])
+    return pd.DataFrame(columns=["Nombre", "Stock", "Caducidad", "Ultimo_Cambio"])
 
 def guardar_datos(df):
     df.to_csv("inventario.csv", index=False)
@@ -46,71 +42,68 @@ def guardar_datos(df):
 if 'df' not in st.session_state:
     st.session_state.df = cargar_datos()
 
-st.title("💊 Mi Botiquín Familiar")
+# --- INTERFAZ ---
+st.title("🚀 Panel de Control de Equipo")
+st.info(f"Sesión iniciada por: *{st.session_state['user']}*. Todos los cambios son visibles para el equipo.")
 
-# --- BARRA LATERAL ---
+# BARRA LATERAL
 with st.sidebar:
-    st.header("➕ Añadir Medicamento")
-    with st.form("nuevo_form", clear_on_submit=True):
-        n = st.text_input("Nombre del medicamento")
-        s = st.number_input("Cantidad (unidades)", min_value=1, value=1)
-        notas = st.text_area("Notas / Síntomas", placeholder="Ej: Para la fiebre")
-        vence = st.date_input("Fecha de caducidad", value=date.today())
+    st.header("➕ Añadir Recurso")
+    with st.form("add_form", clear_on_submit=True):
+        n = st.text_input("Nombre del recurso")
+        s = st.number_input("Cantidad inicial", min_value=1)
+        v = st.date_input("Fecha límite/reposición", value=date.today())
         
-        if st.form_submit_button("Guardar en inventario"):
+        if st.form_submit_button("Añadir al grupo"):
             if n:
-                nueva_fila = pd.DataFrame([{"Nombre": n, "Stock": s, "Caducidad": vence, "Notas": notas}])
-                st.session_state.df = pd.concat([st.session_state.df, nueva_fila], ignore_index=True)
+                nueva = pd.DataFrame([{"Nombre": n, "Stock": s, "Caducidad": v, "Ultimo_Cambio": st.session_state['user']}])
+                st.session_state.df = pd.concat([st.session_state.df, nueva], ignore_index=True)
                 guardar_datos(st.session_state.df)
-                st.success("¡Guardado!")
                 st.rerun()
-
-    st.divider()
-    if st.button("🧹 Borrar todos los caducados"):
-        hoy = date.today()
-        antes = len(st.session_state.df)
-        st.session_state.df = st.session_state.df[st.session_state.df['Caducidad'] >= hoy]
-        guardar_datos(st.session_state.df)
-        st.success(f"Limpieza hecha. Se borraron {antes - len(st.session_state.df)} items.")
+    
+    if st.button("Cerrar Sesión"):
+        del st.session_state["user"]
         st.rerun()
 
-# --- BUSCADOR Y LISTADO ---
-busqueda = st.text_input("🔍 Buscar medicina o síntoma...", placeholder="Ej: Ibuprofeno o Dolor").lower()
+# LISTADO COMPARTIDO
+st.subheader("📦 Inventario Global")
+busqueda = st.text_input("🔍 Buscar recurso compartido...", placeholder="Ej: Cafeína").lower()
 
-# Filtrar datos
 res = st.session_state.df.copy()
 if busqueda:
-    res = res[
-        res['Nombre'].str.lower().str.contains(busqueda) | 
-        res['Notas'].str.lower().str.contains(busqueda)
-    ]
+    res = res[res['Nombre'].str.lower().str.contains(busqueda)]
 
-# Mostrar resultados con diseño de tarjetas
-hoy = date.today()
 if not res.empty:
+    res = res.sort_values("Caducidad")
     for i, fila in res.iterrows():
-        # Color según caducidad
-        dias = (fila['Caducidad'] - hoy).days
-        if dias < 0:
-            color = "#FFDADA"  # Rojo (Caducado)
-        elif dias < 30:
-            color = "#FFF4D1"  # Amarillo (Próximo)
-        else:
-            color = "#D4EDDA"  # Verde (Bien)
-
+        # Estética de tarjeta profesional
         st.markdown(f"""
-            <div style="background-color:{color}; padding:15px; border-radius:10px; border:1px solid #ccc; margin-bottom:10px; color:black;">
-                <h3 style="margin:0;">{fila['Nombre']}</h3>
-                <p style="margin:5px 0;"><b>Stock:</b> {fila['Stock']} unidades | <b>Vence:</b> {fila['Caducidad']}</p>
-                <p style="margin:0;"><i>{fila['Notas']}</i></p>
+            <div style="background-color:#f0f2f6; padding:15px; border-radius:10px; border-left: 5px solid #007bff; margin-bottom:10px; color: black;">
+                <div style="display: flex; justify-content: space-between;">
+                    <b style="font-size:18px;">{fila['Nombre']}</b>
+                    <span>Stock: <b style="font-size:18px;">{fila['Stock']}</b></span>
+                </div>
+                <div style="font-size:12px; color:gray; margin-top:5px;">
+                    📅 Vence: {fila['Caducidad']} | 👤 Modificado por última vez por: {fila['Ultimo_Cambio']}
+                </div>
             </div>
         """, unsafe_allow_html=True)
         
-        # Botones de acción
-        c1, c2, _ = st.columns([1, 1, 8])
-        if c1.button("🗑", key=f"del{i}"):
+        c1, c2, c3, _ = st.columns([0.6, 0.6, 0.6, 7])
+        if c1.button("➕", key=f"u{i}"):
+            st.session_state.df.at[i, 'Stock'] += 1
+            st.session_state.df.at[i, 'Ultimo_Cambio'] = st.session_state['user']
+            guardar_datos(st.session_state.df)
+            st.rerun()
+        if c2.button("➖", key=f"d{i}"):
+            if st.session_state.df.at[i, 'Stock'] > 0:
+                st.session_state.df.at[i, 'Stock'] -= 1
+                st.session_state.df.at[i, 'Ultimo_Cambio'] = st.session_state['user']
+                guardar_datos(st.session_state.df)
+                st.rerun()
+        if c3.button("🗑", key=f"r{i}"):
             st.session_state.df = st.session_state.df.drop(i).reset_index(drop=True)
             guardar_datos(st.session_state.df)
             st.rerun()
 else:
-    st.info("No hay medicamentos registrados o no coinciden con la búsqueda.")
+    st.write("No hay recursos en la lista común.")
