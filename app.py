@@ -2,8 +2,9 @@ import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
+from datetime import datetime, timedelta
 
-# --- 1. CONEXIÓN (SIN MEMORIA CACHÉ PARA QUE SEA EN VIVO) ---
+# --- 1. CONEXIÓN ---
 def conectar_google():
     try:
         scope = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -17,7 +18,7 @@ def conectar_google():
 
 # --- 2. LOGIN ---
 if "user" not in st.session_state:
-    st.title("🔒 Acceso")
+    st.title("🔒 Acceso Inventario")
     u = st.text_input("Usuario")
     p = st.text_input("Contraseña", type="password")
     if st.button("Entrar"):
@@ -26,71 +27,85 @@ if "user" not in st.session_state:
             st.rerun()
     st.stop()
 
-# Conectamos
 worksheet = conectar_google()
-
-# --- 3. CARGA DE DATOS REAL ---
-# Hemos quitado el @st.cache para que no se "olvide" de actualizar
 data = worksheet.get_all_records()
 df = pd.DataFrame(data)
 df.columns = df.columns.str.strip()
 
-# --- 4. FORMULARIO EN LA BARRA LATERAL ---
+# --- 3. BARRA LATERAL ---
 with st.sidebar:
-    st.header("➕ Añadir Medicamento")
+    st.header("➕ Nuevo Registro")
     with st.form("registro", clear_on_submit=True):
         nom = st.text_input("Nombre")
         cant = st.number_input("Cantidad", min_value=0, step=1)
-        fec = st.text_input("Fecha (AAAA-MM-DD)")
+        fec = st.date_input("Fecha de caducidad", min_value=datetime.now())
         ubi = st.selectbox("Ubicación", ["Medicación de vitrina", "Medicación de armario"])
-        
-        if st.form_submit_button("Registrar"):
-            if nom and fec:
-                # Escribimos en Google Sheets
-                worksheet.append_row([nom, cant, fec, ubi, st.session_state["user"]])
-                st.success("✅ Guardado en Google. Actualizando...")
-                # Forzamos el reinicio para leer los nuevos datos inmediatamente
-                st.rerun()
-            else:
-                st.warning("Rellena todos los campos.")
-    
-    st.divider()
-    if st.button("🔄 Actualizar lista ahora"):
-        st.rerun()
+        if st.form_submit_button("Guardar"):
+            worksheet.append_row([nom, int(cant), str(fec), ubi, st.session_state["user"]])
+            st.success("Guardado")
+            st.rerun()
 
-# --- 5. PESTAÑAS Y LISTADO ---
-st.title("💊 Inventario de Medicación")
+# --- 4. LÓGICA DE ALERTAS Y LISTADO ---
+st.title("💊 Gestión Inteligente de Stock")
+
 tab1, tab2 = st.tabs(["📁 Vitrina", "📁 Armario"])
 
-def pintar_lista(nombre_filtro):
-    # Buscamos la columna de ubicación (sin importar tildes)
+def pintar_inventario(nombre_filtro):
     col_ubi = [c for c in df.columns if "Ubicacion" in c or "Ubicación" in c]
-    
     if not df.empty and col_ubi:
-        nombre_col = col_ubi[0]
-        items = df[df[nombre_col] == nombre_filtro]
-        
-        if not items.empty:
-            for i, fila in items.iterrows():
+        items = df[df[col_ubi[0]] == nombre_filtro]
+        hoy = datetime.now()
+        un_mes_despues = hoy + timedelta(days=30)
+
+        for i, fila in items.iterrows():
+            # Lógica de fecha para avisos
+            fecha_cad = str(fila.get('Caducidad', ''))
+            color_fondo = "#f0f2f6"
+            aviso_texto = ""
+            
+            try:
+                dt_cad = datetime.strptime(fecha_cad, "%Y-%m-%d")
+                if dt_cad <= hoy:
+                    color_fondo = "#ffcccc" # Rojo si ya caducó
+                    aviso_texto = "⚠ ¡CADUCADO!"
+                elif dt_cad <= un_mes_despues:
+                    color_fondo = "#ffe5b4" # Naranja si caduca pronto
+                    aviso_texto = "⏳ Caduca en menos de 1 mes"
+            except:
+                pass
+
+            # Diseño del Medicamento
+            with st.container():
                 st.markdown(f"""
-                    <div style="background-color:#f0f2f6; padding:15px; border-radius:10px; border-left: 6px solid #007bff; margin-bottom:10px; color: black;">
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <span style="font-size:18px;"><b>{fila.get('Nombre', 'Error')}</b> (x{fila.get('Stock', 0)})</span>
-                            <span style="font-size:14px; color:#666;">📅 Vence: <b>{fila.get('Caducidad', 'S/F')}</b></span>
+                    <div style="background-color:{color_fondo}; padding:15px; border-radius:10px; border-left: 6px solid #007bff; margin-bottom:5px; color: black;">
+                        <div style="display: flex; justify-content: space-between;">
+                            <span><b>{fila['Nombre']}</b></span>
+                            <span style="color:red; font-weight:bold;">{aviso_texto}</span>
                         </div>
+                        <div style="font-size:13px;">Stock actual: {fila['Stock']} | Vence: {fila['Caducidad']}</div>
                     </div>
                 """, unsafe_allow_html=True)
                 
-                # Botón para borrar
-                if st.button(f"Borrar {fila.get('Nombre', i)}", key=f"del_{i}"):
-                    worksheet.delete_rows(i + 2)
-                    st.rerun()
-        else:
-            st.write("No hay nada en esta sección.")
+                # Botones de gestión rápida (+1, -1, Eliminar)
+                c1, c2, c3, c4 = st.columns([1, 1, 3, 2])
+                with c1:
+                    if st.button("➕", key=f"add_{i}"):
+                        worksheet.update_cell(i + 2, 2, int(fila['Stock']) + 1)
+                        st.rerun()
+                with c2:
+                    if st.button("➖", key=f"min_{i}"):
+                        nuevo_valor = max(0, int(fila['Stock']) - 1)
+                        worksheet.update_cell(i + 2, 2, nuevo_valor)
+                        st.rerun()
+                with c4:
+                    if st.button("🗑 Borrar", key=f"del_{i}"):
+                        worksheet.delete_rows(i + 2)
+                        st.rerun()
+                st.write("---")
     else:
-        st.info("No se encuentran datos. Revisa los nombres de las columnas en tu Excel.")
+        st.write("Sin datos.")
 
 with tab1:
-    pintar_lista("Medicación de vitrina")
+    pintar_inventario("Medicación de vitrina")
 with tab2:
-    pintar_lista("Medicación de armario")
+    pintar_inventario("Medicación de armario")
