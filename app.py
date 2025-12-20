@@ -3,96 +3,94 @@ import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 
-# --- 1. CONEXIÓN CON GOOGLE SHEETS ---
+# --- 1. CONEXIÓN (SIN MEMORIA CACHÉ PARA QUE SEA EN VIVO) ---
 def conectar_google():
-    scope = ["https://www.googleapis.com/auth/spreadsheets"]
-    # Usamos la llave que pegaste en Secrets
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
-    client = gspread.authorize(creds)
-    # Abrimos el Excel por la URL que también está en Secrets
-    sh = client.open_by_url(st.secrets["url_excel"])
-    return sh.get_worksheet(0)
-
-# Intentar conectar
-try:
-    worksheet = conectar_google()
-except Exception as e:
-    st.error(f"Error de conexión: {e}")
-    st.stop()
+    try:
+        scope = ["https://www.googleapis.com/auth/spreadsheets"]
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+        client = gspread.authorize(creds)
+        sh = client.open_by_url(st.secrets["url_excel"])
+        return sh.get_worksheet(0)
+    except Exception as e:
+        st.error(f"Error de conexión: {e}")
+        return None
 
 # --- 2. LOGIN ---
 if "user" not in st.session_state:
-    st.title("🔒 Acceso Inventario")
+    st.title("🔒 Acceso")
     u = st.text_input("Usuario")
     p = st.text_input("Contraseña", type="password")
     if st.button("Entrar"):
         if u in st.secrets["users"] and p == st.secrets["users"][u]:
             st.session_state["user"] = u
             st.rerun()
-        else:
-            st.error("Credenciales incorrectas")
     st.stop()
 
-# --- 3. FUNCIONES DE GESTIÓN ---
-def cargar_datos():
-    # Lee todo el Excel y lo convierte en una tabla de Python
-    lista_datos = worksheet.get_all_records()
-    return pd.DataFrame(lista_datos)
+# Conectamos
+worksheet = conectar_google()
 
-# --- 4. INTERFAZ PRINCIPAL ---
-st.title("💊 Gestión de Medicación")
+# --- 3. CARGA DE DATOS REAL ---
+# Hemos quitado el @st.cache para que no se "olvide" de actualizar
+data = worksheet.get_all_records()
+df = pd.DataFrame(data)
+df.columns = df.columns.str.strip()
 
-# BARRA LATERAL PARA AÑADIR NUEVOS
+# --- 4. FORMULARIO EN LA BARRA LATERAL ---
 with st.sidebar:
-    st.header("➕ Nuevo Medicamento")
-    with st.form("form_add", clear_on_submit=True):
-        nombre = st.text_input("Nombre del fármaco")
-        stock = st.number_input("Cantidad inicial", min_value=0, step=1)
-        fecha = st.text_input("Fecha de caducidad (Ej: 2026-05-20)")
-        ubi = st.selectbox("¿Dónde se guarda?", ["Medicación de vitrina", "Medicación de armario"])
+    st.header("➕ Añadir Medicamento")
+    with st.form("registro", clear_on_submit=True):
+        nom = st.text_input("Nombre")
+        cant = st.number_input("Cantidad", min_value=0, step=1)
+        fec = st.text_input("Fecha (AAAA-MM-DD)")
+        ubi = st.selectbox("Ubicación", ["Medicación de vitrina", "Medicación de armario"])
         
-        if st.form_submit_button("Registrar Medicamento"):
-            if nombre and fecha:
-                # Añade una fila al final del Excel de Google
-                worksheet.append_row([nombre, stock, fecha, ubi, st.session_state["user"]])
-                st.success("✅ ¡Guardado en Google Sheets!")
+        if st.form_submit_button("Registrar"):
+            if nom and fec:
+                # Escribimos en Google Sheets
+                worksheet.append_row([nom, cant, fec, ubi, st.session_state["user"]])
+                st.success("✅ Guardado en Google. Actualizando...")
+                # Forzamos el reinicio para leer los nuevos datos inmediatamente
                 st.rerun()
             else:
-                st.warning("Por favor, rellena nombre y fecha.")
+                st.warning("Rellena todos los campos.")
+    
+    st.divider()
+    if st.button("🔄 Actualizar lista ahora"):
+        st.rerun()
 
-# --- 5. VISUALIZACIÓN POR PESTAÑAS ---
-df = cargar_datos()
-tab1, tab2 = st.tabs(["📁 Medicación de Vitrina", "📁 Medicación de Armario"])
+# --- 5. PESTAÑAS Y LISTADO ---
+st.title("💊 Inventario de Medicación")
+tab1, tab2 = st.tabs(["📁 Vitrina", "📁 Armario"])
 
-def renderizar_lista(nombre_ubicacion):
-    # Filtrar solo lo que pertenece a esta pestaña
-    if not df.empty and "Ubicacion" in df.columns:
-        items = df[df["Ubicacion"] == nombre_ubicacion]
+def pintar_lista(nombre_filtro):
+    # Buscamos la columna de ubicación (sin importar tildes)
+    col_ubi = [c for c in df.columns if "Ubicacion" in c or "Ubicación" in c]
+    
+    if not df.empty and col_ubi:
+        nombre_col = col_ubi[0]
+        items = df[df[nombre_col] == nombre_filtro]
         
         if not items.empty:
             for i, fila in items.iterrows():
-                # DISEÑO: Nombre a la izquierda, Fecha a la derecha
                 st.markdown(f"""
                     <div style="background-color:#f0f2f6; padding:15px; border-radius:10px; border-left: 6px solid #007bff; margin-bottom:10px; color: black;">
                         <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <span style="font-size:18px;"><b>{fila['Nombre']}</b> (x{fila['Stock']})</span>
-                            <span style="font-size:14px; color:#666;">📅 Vence: <b>{fila['Caducidad']}</b></span>
+                            <span style="font-size:18px;"><b>{fila.get('Nombre', 'Error')}</b> (x{fila.get('Stock', 0)})</span>
+                            <span style="font-size:14px; color:#666;">📅 Vence: <b>{fila.get('Caducidad', 'S/F')}</b></span>
                         </div>
                     </div>
                 """, unsafe_allow_html=True)
                 
-                # Botón pequeño para borrar justo debajo de cada uno
-                if st.button(f"Eliminar {fila['Nombre']}", key=f"btn_{i}"):
-                    # gspread borra filas empezando por 1 y contando encabezado (i+2)
+                # Botón para borrar
+                if st.button(f"Borrar {fila.get('Nombre', i)}", key=f"del_{i}"):
                     worksheet.delete_rows(i + 2)
                     st.rerun()
         else:
-            st.write("No hay nada aquí todavía.")
+            st.write("No hay nada en esta sección.")
     else:
-        st.write("El Excel está vacío.")
+        st.info("No se encuentran datos. Revisa los nombres de las columnas en tu Excel.")
 
 with tab1:
-    renderizar_lista("Medicación de vitrina")
-
+    pintar_lista("Medicación de vitrina")
 with tab2:
-    renderizar_lista("Medicación de armario")
+    pintar_lista("Medicación de armario")
