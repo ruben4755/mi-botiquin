@@ -5,7 +5,7 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 
 # --- 1. CONFIGURACIÓN ---
-st.set_page_config(page_title="Inventario Inteligente", layout="wide")
+st.set_page_config(page_title="Inventario Real-Time", layout="wide")
 
 @st.cache_resource
 def obtener_cliente():
@@ -40,7 +40,7 @@ if "user" not in st.session_state:
                 st.rerun()
     st.stop()
 
-# --- 3. PROCESAMIENTO ---
+# --- 3. CARGA DE DATOS ---
 rows, worksheet = cargar_datos_vivos()
 
 if rows:
@@ -51,11 +51,10 @@ if rows:
     col_cad = next((c for c in df.columns if "Cad" in c or "Fec" in c), "Caducidad")
     col_ubi = next((c for c in df.columns if "Ubi" in c), "Ubicacion")
 else:
-    st.warning("El Excel está vacío.")
     st.stop()
 
-# --- 4. FUNCIÓN PARA PINTAR TARJETAS (REUTILIZABLE) ---
-def pintar_tarjeta(fila, idx_excel, modo_busqueda=False):
+# --- 4. FUNCIÓN TARJETAS ---
+def pintar_tarjeta(fila, idx_excel, key_suffix):
     nombre = fila[col_nom]
     stock = fila[col_stock]
     fecha_s = fila[col_cad]
@@ -74,66 +73,51 @@ def pintar_tarjeta(fila, idx_excel, modo_busqueda=False):
 
     with st.container():
         c1, c2, c3, c4 = st.columns([5, 1, 1, 1])
+        info = f"📍 <b>{ubicacion}</b><br><b>{nombre}</b> (Stock: {stock}) {txt}<br><small>Vence: {fecha_s}</small>"
+        c1.markdown(f"<div style='background:{bg}; padding:10px; border-radius:5px; color:black; margin-bottom:5px; border-left: 5px solid #007bff;'>{info}</div>", unsafe_allow_html=True)
         
-        # Si es modo búsqueda, añadimos la ubicación en grande
-        info_html = f"<b>{nombre}</b> (Stock: {stock}) {txt}<br><small>Vence: {fecha_s}</small>"
-        if modo_busqueda:
-            info_html = f"📍 <b>{ubicacion}</b><br>" + info_html
-            
-        c1.markdown(f"<div style='background:{bg}; padding:10px; border-radius:5px; color:black; margin-bottom:5px; border-left: 5px solid #007bff;'>{info_html}</div>", unsafe_allow_html=True)
-        
-        # Botones de acción
-        suffix = "srch" if modo_busqueda else "tab"
-        if c2.button("＋", key=f"p{idx_excel}_{suffix}"):
-            col_idx = headers.index(col_stock) + 1
-            worksheet.update_cell(idx_excel, col_idx, int(stock) + 1)
-            st.cache_data.clear()
+        if c2.button("＋", key=f"p_{idx_excel}_{key_suffix}"):
+            worksheet.update_cell(idx_excel, headers.index(col_stock)+1, int(stock)+1)
             st.rerun()
-        if c3.button("－", key=f"m{idx_excel}_{suffix}"):
-            col_idx = headers.index(col_stock) + 1
-            worksheet.update_cell(idx_excel, col_idx, max(0, int(stock) - 1))
-            st.cache_data.clear()
+        if c3.button("－", key=f"m_{idx_excel}_{key_suffix}"):
+            worksheet.update_cell(idx_excel, headers.index(col_stock)+1, max(0, int(stock)-1))
             st.rerun()
-        if c4.button("🗑", key=f"d{idx_excel}_{suffix}"):
+        if c4.button("🗑", key=f"d_{idx_excel}_{key_suffix}"):
             worksheet.delete_rows(idx_excel)
-            st.cache_data.clear()
             st.rerun()
 
 # --- 5. INTERFAZ ---
-st.title("💊 Inventario de Medicación")
+st.title("💊 Inventario Real-Time")
 
-# BUSCADOR EN TIEMPO REAL
-st.subheader("🔍 Buscador Inteligente")
-busqueda = st.text_input("Empieza a escribir el nombre...", key="main_search").strip().lower()
+# BUSCADOR SIN FORMULARIO (PARA TIEMPO REAL)
+busqueda = st.text_input("🔍 Escribe para buscar...", value="", placeholder="Escribe un nombre...").strip().lower()
 
 if busqueda:
-    # Filtro letra a letra
-    mask = df[col_nom].str.lower().str.contains(busqueda)
-    resultados = df[mask]
-    
+    # Filtro inmediato
+    resultados = df[df[col_nom].str.lower().str.contains(busqueda, na=False)]
     if not resultados.empty:
         for i, fila in resultados.iterrows():
-            pintar_tarjeta(fila, i + 2, modo_busqueda=True)
+            pintar_tarjeta(fila, i + 2, "search")
     else:
         st.write("No hay coincidencias.")
     st.divider()
 
-# PESTAÑAS PARA NAVEGACIÓN NORMAL
+# PESTAÑAS
 t1, t2 = st.tabs(["📁 Vitrina", "📁 Armario"])
 
 with t1:
     items = df[df[col_ubi] == "Medicación de vitrina"]
     for i, fila in items.iterrows():
-        pintar_tarjeta(fila, i + 2)
+        pintar_tarjeta(fila, i + 2, "tab1")
 
 with t2:
     items = df[df[col_ubi] == "Medicación de armario"]
     for i, fila in items.iterrows():
-        pintar_tarjeta(fila, i + 2)
+        pintar_tarjeta(fila, i + 2, "tab2")
 
-# BARRA LATERAL PARA AÑADIR
+# BARRA LATERAL
 with st.sidebar:
-    st.header("➕ Nuevo Registro")
+    st.header("➕ Nuevo")
     with st.form("add"):
         n = st.text_input("Nombre")
         s = st.number_input("Stock", min_value=0, step=1)
@@ -141,5 +125,4 @@ with st.sidebar:
         u = st.selectbox("Ubicación", ["Medicación de vitrina", "Medicación de armario"])
         if st.form_submit_button("Guardar"):
             worksheet.append_row([n, int(s), str(c), u, st.session_state["user"]])
-            st.cache_data.clear()
             st.rerun()
