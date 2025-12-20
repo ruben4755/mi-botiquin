@@ -5,7 +5,7 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 
 # --- 1. CONFIGURACIÓN ---
-st.set_page_config(page_title="Inventario Instantáneo", layout="wide")
+st.set_page_config(page_title="Inventario Rápido", layout="wide")
 
 @st.cache_resource
 def obtener_cliente():
@@ -13,9 +13,7 @@ def obtener_cliente():
         scope = ["https://www.googleapis.com/auth/spreadsheets"]
         creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
         return gspread.authorize(creds)
-    except Exception as e:
-        st.error(f"Error en credenciales: {e}")
-        return None
+    except: return None
 
 def cargar_datos_vivos():
     try:
@@ -24,8 +22,7 @@ def cargar_datos_vivos():
         worksheet = sh.get_worksheet(0)
         rows = worksheet.get_all_values()
         return rows, worksheet
-    except:
-        return None, None
+    except: return None, None
 
 # --- 2. LOGIN ---
 if "user" not in st.session_state:
@@ -39,7 +36,6 @@ if "user" not in st.session_state:
                 st.rerun()
     st.stop()
 
-# --- 3. CARGA DE DATOS ---
 rows, worksheet = cargar_datos_vivos()
 
 if rows:
@@ -52,7 +48,7 @@ if rows:
 else:
     st.stop()
 
-# --- 4. FUNCIÓN TARJETAS ---
+# --- 3. FUNCIÓN TARJETAS ---
 def pintar_tarjeta(fila, idx_excel, key_suffix):
     nombre = fila[col_nom]
     stock = fila[col_stock]
@@ -61,13 +57,11 @@ def pintar_tarjeta(fila, idx_excel, key_suffix):
     
     hoy = datetime.now()
     alerta = hoy + timedelta(days=30)
-    bg = "#f0f2f6"
-    txt = ""
-    
+    bg, txt = "#f0f2f6", ""
     try:
         dt = datetime.strptime(fecha_s, "%Y-%m-%d")
         if dt <= hoy: bg, txt = "#ffcccc", "🚨 CADUCADO"
-        elif dt <= alerta: bg, txt = "#ffe5b4", "⏳ CADUCA PRONTO"
+        elif dt <= alerta: bg, txt = "#ffe5b4", "⏳ PRÓXIMO"
     except: pass
 
     with st.container():
@@ -85,38 +79,22 @@ def pintar_tarjeta(fila, idx_excel, key_suffix):
             worksheet.delete_rows(idx_excel)
             st.rerun()
 
-# --- 5. INTERFAZ ---
-st.title("💊 Inventario Real-Time")
+# --- 4. INTERFAZ ---
+st.title("💊 Inventario de Medicación")
 
-# --- EL CAMBIO CLAVE ESTÁ AQUÍ ---
-# Usamos un contenedor vacío para que el buscador siempre esté arriba y reaccione
-if 'search_term' not in st.session_state:
-    st.session_state.search_term = ""
+# BUSCADOR TIPO SELECTBOX (ESTE SÍ FILTRA MIENTRAS ESCRIBES)
+st.subheader("🔍 Buscador Instantáneo")
+opciones = [""] + sorted(df[col_nom].unique().tolist())
+seleccion = st.selectbox("Escribe el nombre del medicamento...", opciones, index=0)
 
-def update_search():
-    st.session_state.search_term = st.session_state.search_input
-
-# El widget manda la señal de actualizar en cada cambio
-busqueda = st.text_input(
-    "🔍 Escribe para buscar (instantáneo)...", 
-    key="search_input", 
-    on_change=update_search
-).strip().lower()
-
-# Usamos el valor del estado de sesión para filtrar
-term = st.session_state.search_term.lower()
-
-if term:
-    resultados = df[df[col_nom].str.lower().str.contains(term, na=False)]
-    if not resultados.empty:
-        st.subheader(f"Resultados para: {term}")
-        for i, fila in resultados.iterrows():
-            pintar_tarjeta(fila, i + 2, "search")
-    else:
-        st.write("No hay coincidencias.")
+if seleccion:
+    # Filtramos por el nombre seleccionado
+    resultados = df[df[col_nom] == seleccion]
+    for i, fila in resultados.iterrows():
+        pintar_tarjeta(fila, i + 2, "search")
     st.divider()
 
-# --- PESTAÑAS ---
+# PESTAÑAS
 t1, t2 = st.tabs(["📁 Vitrina", "📁 Armario"])
 
 with t1:
@@ -129,7 +107,6 @@ with t2:
     for i, fila in items.iterrows():
         pintar_tarjeta(fila, i + 2, "tab2")
 
-# BARRA LATERAL
 with st.sidebar:
     st.header("➕ Nuevo")
     with st.form("add"):
