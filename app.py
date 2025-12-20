@@ -82,13 +82,12 @@ def pintar_tarjeta(fila, idx_excel, key_suffix):
 # --- 4. INTERFAZ ---
 st.title("💊 Inventario de Medicación")
 
-# BUSCADOR TIPO SELECTBOX (ESTE SÍ FILTRA MIENTRAS ESCRIBES)
+# BUSCADOR
 st.subheader("🔍 Buscador Instantáneo")
 opciones = [""] + sorted(df[col_nom].unique().tolist())
 seleccion = st.selectbox("Escribe el nombre del medicamento...", opciones, index=0)
 
 if seleccion:
-    # Filtramos por el nombre seleccionado
     resultados = df[df[col_nom] == seleccion]
     for i, fila in resultados.iterrows():
         pintar_tarjeta(fila, i + 2, "search")
@@ -107,13 +106,23 @@ with t2:
     for i, fila in items.iterrows():
         pintar_tarjeta(fila, i + 2, "tab2")
 
+# --- 5. BARRA LATERAL (CON LIMPIEZA AUTOMÁTICA) ---
 with st.sidebar:
-    st.header("➕ Nuevo")
-    with st.form("add"):
+    st.header("➕ Nuevo Registro")
+    # El parámetro clear_on_submit=True es el que limpia el formulario al guardar
+    with st.form("add_form", clear_on_submit=True):
         n = st.text_input("Nombre")
         s = st.number_input("Stock", min_value=0, step=1)
         c = st.date_input("Caducidad")
         u = st.selectbox("Ubicación", ["Medicación de vitrina", "Medicación de armario"])
-        if st.form_submit_button("Guardar"):
-            worksheet.append_row([n, int(s), str(c), u, st.session_state["user"]])
-            st.rerun()
+        
+        enviar = st.form_submit_button("Guardar Medicamento")
+        
+        if enviar:
+            if n:
+                with st.spinner("Guardando..."):
+                    worksheet.append_row([n, int(s), str(c), u, st.session_state["user"]])
+                    st.success(f"✅ {n} guardado correctamente")
+                    st.rerun()
+            else:
+                st.error("El nombre es obligatorio")
