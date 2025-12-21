@@ -16,7 +16,6 @@ if "last_activity" not in st.session_state:
     st.session_state.last_activity = time.time()
 
 if "logueado" in st.session_state and st.session_state.logueado:
-    # 180 segundos = 3 minutos
     if time.time() - st.session_state.last_activity > 180:
         for key in list(st.session_state.keys()):
             del st.session_state[key]
@@ -52,8 +51,7 @@ def traducir_a_coloquial(nombre_tecnico):
         "antitusígenos": "Para calmar la tos seca.",
         "ansiolíticos": "Para los nervios o ayudarte a dormir.",
         "antihipertensivos": "Para la tensión alta.",
-        "antidiabéticos": "Para el azúcar en sangre.",
-        "hipolipemiantes": "Para bajar el colesterol."
+        "antidiabéticos": "Para el azúcar en sangre."
     }
     for clave, explicacion in mapeo.items():
         if clave in nombre_tecnico: return explicacion
@@ -114,7 +112,7 @@ def cargar_inventario():
 
 df_master = cargar_inventario()
 
-# --- 6. SIDEBAR (Solo Admin puede añadir) ---
+# --- 6. SIDEBAR (Con Historial para Admin) ---
 with st.sidebar:
     st.header(f"👤 {st.session_state.user.capitalize()}")
     if st.button("🚪 Salir"): 
@@ -122,6 +120,16 @@ with st.sidebar:
         st.rerun()
     
     if st.session_state.role == "admin":
+        st.divider()
+        st.subheader("📝 Última Actividad")
+        try:
+            h_data = ws_his.get_all_values()
+            if len(h_data) > 1:
+                df_h = pd.DataFrame(h_data[1:], columns=h_data[0]).tail(10)
+                st.table(df_h)
+            else: st.write("No hay registros.")
+        except: st.write("Error al cargar historial.")
+
         st.divider()
         st.subheader("➕ Añadir Medicación")
         with st.form("alta", clear_on_submit=True):
@@ -133,17 +141,15 @@ with st.sidebar:
                 if n:
                     ws_inv.append_row([n, s, str(f), u])
                     ws_his.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "ALTA", n])
-                    st.success(f"{n} añadido correctamente.")
                     st.session_state.last_activity = time.time()
-                    time.sleep(1)
                     st.rerun()
 
-# --- 7. BÚSQUEDA ULTRA INTELIGENTE ---
+# --- 7. BÚSQUEDA ---
 def normalize(t):
     return ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn').lower()
 
 st.title("💊 Inventario Médico")
-raw_query = st_keyup("🔍 Busca por nombre o lugar (vitrina/armario)...", key="search_main").strip()
+raw_query = st_keyup("🔍 Busca por nombre o lugar...", key="search_main").strip()
 
 if raw_query:
     st.session_state.last_activity = time.time()
@@ -171,19 +177,12 @@ def dibujar_tarjeta(fila, key_tab):
         with st.expander("🤔 ¿Para qué sirve?"):
             notas_data = ws_not.get_all_values()
             nota_m = next((r for r in notas_data if r[0] == nombre), None)
-            
             if nota_m: p_act, d_uso = nota_m[1], nota_m[2]
             else:
                 info = buscar_info_web(nombre)
                 p_act, d_uso = (info['p'], info['e']) if info else ("No disponible", "Sin datos.")
             
-            # Principio Activo primero, Descripción después
-            st.markdown(f'''
-                <div class="caja-info">
-                    <b>Principio Activo:</b> {p_act}<br><br>
-                    <b>Descripción:</b> {d_uso}
-                </div>
-            ''', unsafe_allow_html=True)
+            st.markdown(f'<div class="caja-info"><b>Principio Activo:</b> {p_act}<br><br><b>Descripción:</b> {d_uso}</div>', unsafe_allow_html=True)
 
         c1, c2 = st.columns([4, 1])
         if c1.button(f"💊 RETIRAR 1 UNIDAD", key=f"ret_{nombre}_{key_tab}"):
@@ -191,9 +190,8 @@ def dibujar_tarjeta(fila, key_tab):
             celda = ws_inv.find(nombre)
             if celda:
                 ws_inv.update_cell(celda.row, 2, max(0, stock - 1))
-                # Registro en Historial
                 ws_his.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "RETIRADA", nombre])
-                st.toast(f"✅ {nombre} retirado por {st.session_state.user}")
+                st.toast(f"✅ {st.session_state.user} retiró {nombre}")
                 time.sleep(1)
                 st.rerun()
 
