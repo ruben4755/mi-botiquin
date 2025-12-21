@@ -56,6 +56,7 @@ def iniciar_conexion():
             ws_log = sh.worksheet("Registro")
         except:
             ws_log = sh.add_worksheet(title="Registro", rows="1000", cols="5")
+            ws_log.append_row(["Fecha", "Usuario", "Acción", "Medicamento", "Stock Resultante"])
         return ws_inv, ws_log
     except Exception as e:
         st.error(f"Error de conexión: {e}")
@@ -70,7 +71,6 @@ headers = [h.strip() for h in data[0]]
 df_master = pd.DataFrame(data[1:], columns=headers)
 df_master["Stock"] = pd.to_numeric(df_master["Stock"], errors='coerce').fillna(0).astype(int)
 df_master["idx_excel"] = range(2, len(df_master) + 2)
-# Limpiamos nombres para evitar fallos de búsqueda por espacios invisibles
 df_master["Nombre_Clean"] = df_master["Nombre"].str.upper().str.strip()
 df_visible = df_master[df_master["Stock"] > 0].copy()
 
@@ -104,37 +104,36 @@ def pintar_tarjeta(fila, k):
     if c1.button(f"💊 COGER", key=f"c_{idx}_{k}"):
         n = max(0, int(stock) - 1)
         ws_inv.update_cell(idx, headers.index("Stock")+1, n)
+        # REGISTRO DE QUIEN COGE
         ws_log.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "RETIRADO", nombre, str(n)])
         st.rerun()
     
     if st.session_state.role == "admin":
         if c2.button("➕", key=f"a_{idx}_{k}"):
-            ws_inv.update_cell(idx, headers.index("Stock")+1, int(stock) + 1)
+            n_plus = int(stock) + 1
+            ws_inv.update_cell(idx, headers.index("Stock")+1, n_plus)
+            ws_log.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "AÑADIDO", nombre, str(n_plus)])
             st.rerun()
         if c3.button("🗑", key=f"d_{idx}_{k}"):
             ws_inv.delete_rows(idx)
+            ws_log.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "ELIMINADO", nombre, "0"])
             st.rerun()
 
-# --- 6. INTERFAZ PRINCIPAL CON BUSCADOR FLEXIBLE ---
+# --- 6. CUERPO PRINCIPAL ---
 st.title("💊 Inventario Médico")
 
-# El buscador ahora limpia lo que escribes para que coincida siempre
 busqueda_input = st_keyup("🔍 BUSCAR MEDICAMENTO:", key="buscador_inst")
 busqueda = busqueda_input.upper().strip() if busqueda_input else ""
 
 if busqueda:
-    # Filtro que busca si el texto está contenido, ignorando espacios al inicio/final
     resultados = df_visible[df_visible["Nombre_Clean"].str.contains(busqueda, na=False)]
-    
     if not resultados.empty:
-        st.subheader(f"Resultados para '{busqueda}':")
         for _, fila in resultados.iterrows():
             pintar_tarjeta(fila, "busq")
         st.divider()
     else:
-        st.warning(f"No se han encontrado coincidencias para '{busqueda}'.")
+        st.warning(f"No hay coincidencias para '{busqueda}'.")
 
-# Tabs
 t = st.tabs(["📋 Todo", "⚠ Alertas", "📁 Vitrina", "📁 Armario"])
 with t[0]:
     for _, f in df_visible.iterrows(): pintar_tarjeta(f, "all")
@@ -149,16 +148,16 @@ with t[2]:
 with t[3]:
     for _, f in df_visible[df_visible["Ubicacion"] == "Medicación de armario"].iterrows(): pintar_tarjeta(f, "ar")
 
-# --- 7. SIDEBAR Y AÑADIR ---
+# --- 7. SIDEBAR (ADMINISTRACIÓN Y LOGS) ---
 with st.sidebar:
-    st.write(f"Usuario: {st.session_state.user}")
-    if st.button("Salir"):
+    st.subheader(f"👤 {st.session_state.user.capitalize()}")
+    if st.button("Cerrar Sesión"):
         st.session_state.clear()
         st.rerun()
     
     if st.session_state.role == "admin":
         st.divider()
-        st.subheader("➕ Añadir Medicamento")
+        st.subheader("➕ Añadir Stock")
         with st.form("nuevo_med", clear_on_submit=True):
             nombre_n = st.text_input("Nombre").upper()
             stock_n = st.number_input("Cantidad", min_value=1, value=1)
@@ -166,7 +165,6 @@ with st.sidebar:
             mes_n = col_m.selectbox("Mes", list(range(1, 13)), index=datetime.now().month - 1)
             anio_n = col_y.selectbox("Año", list(range(datetime.now().year, datetime.now().year + 10)))
             ubi_n = st.selectbox("Ubicación", ["Medicación de vitrina", "Medicación de armario"])
-            
             if st.form_submit_button("Guardar"):
                 if nombre_n:
                     ultimo_dia = calendar.monthrange(anio_n, mes_n)[1]
@@ -176,3 +174,17 @@ with st.sidebar:
                     st.success("Guardado")
                     time.sleep(1)
                     st.rerun()
+
+        # --- SECCIÓN EXCLUSIVA ADMIN: REGISTRO DE ACTIVIDAD ---
+        st.divider()
+        st.subheader("📜 Historial de Uso")
+        try:
+            log_data = ws_log.get_all_values()
+            if len(log_data) > 1:
+                df_logs = pd.DataFrame(log_data[1:], columns=log_data[0])
+                # Mostrar los últimos 20 movimientos, los más recientes primero
+                st.dataframe(df_logs.iloc[::-1].head(20), hide_index=True)
+            else:
+                st.info("No hay registros aún.")
+        except:
+            st.error("No se pudo cargar el historial.")
