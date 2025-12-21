@@ -1,8 +1,9 @@
 import streamlit as st
-import pandas as pd
+import pd as pd
 import gspread
 import requests
 import time
+import unicodedata
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 from st_keyup import st_keyup
@@ -15,11 +16,10 @@ if "last_activity" not in st.session_state:
     st.session_state.last_activity = time.time()
 
 if "logueado" in st.session_state and st.session_state.logueado:
-    # Si han pasado más de 180 segundos (3 min) desde la última actividad
     if time.time() - st.session_state.last_activity > 180:
         for key in list(st.session_state.keys()):
             del st.session_state[key]
-        st.warning("Sesión cerrada por inactividad.")
+        st.warning("Sesión cerrada por inactividad (3 min).")
         st.stop()
 
 st.markdown("""
@@ -51,7 +51,8 @@ def traducir_a_coloquial(nombre_tecnico):
         "antitusígenos": "Para calmar la tos seca.",
         "ansiolíticos": "Para los nervios o ayudarte a dormir.",
         "antihipertensivos": "Para la tensión alta.",
-        "antidiabéticos": "Para el azúcar en la sangre."
+        "antidiabéticos": "Para el azúcar en sangre.",
+        "hipolipemiantes": "Para bajar el colesterol."
     }
     for clave, explicacion in mapeo.items():
         if clave in nombre_tecnico: return explicacion
@@ -134,17 +135,25 @@ with st.sidebar:
                     st.session_state.last_activity = time.time()
                     st.rerun()
 
-# --- 7. PANEL PRINCIPAL Y BUSCADOR ---
-st.title("💊 Inventario Médico")
-query = st_keyup("🔍 Busca un medicamento...", key="search_main").strip().upper()
+# --- 7. MOTOR DE BÚSQUEDA ULTRA INTELIGENTE ---
+def normalize(t):
+    return ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn').lower()
 
-# Reiniciar timer si hay interacción con el buscador
-if query:
+st.title("💊 Inventario Médico Pro")
+raw_query = st_keyup("🔍 ¿Qué buscas? (Nombre o Ubicación)", key="search_pro").strip()
+
+# Reiniciar actividad
+if raw_query:
     st.session_state.last_activity = time.time()
 
 df_vis = df_master[df_master["Stock"] > 0].copy() if not df_master.empty else pd.DataFrame()
-if query and not df_vis.empty:
-    df_vis = df_vis[df_vis["Nombre"].str.contains(query, na=False)]
+
+if raw_query and not df_vis.empty:
+    q = normalize(raw_query)
+    # Búsqueda ultra inteligente: cruza Nombre y Ubicación al mismo tiempo
+    df_vis = df_vis[
+        df_vis.apply(lambda r: q in normalize(r["Nombre"]) or q in normalize(r["Ubicacion"]), axis=1)
+    ]
 
 tabs = st.tabs(["📋 Todo", "💊 Vitrina", "📦 Armario"])
 
@@ -160,7 +169,6 @@ def dibujar_tarjeta(fila, key_tab):
 
         st.markdown(f'<div class="tarjeta-med" style="border-left-color: {col}"><b>{nombre}</b><br><small>{stock} uds | {fila["Ubicacion"]} | Vence: {cad}</small></div>', unsafe_allow_html=True)
         
-        # DISEÑO SOLICITADO: emoji 🤔 y orden de información
         with st.expander("🤔 ¿Para qué sirve?"):
             notas_data = ws_not.get_all_values()
             nota_m = next((r for r in notas_data if r[0] == nombre), None)
@@ -210,4 +218,7 @@ def dibujar_tarjeta(fila, key_tab):
 for i, filtro in enumerate(["", "vitrina", "armario"]):
     with tabs[i]:
         df_f = df_vis if not filtro else df_vis[df_vis["Ubicacion"].str.contains(filtro, case=False)]
-        for _, fila in df_f.iterrows(): dibujar_tarjeta(fila, i)
+        if df_f.empty:
+            st.caption("No hay resultados.")
+        else:
+            for _, fila in df_f.iterrows(): dibujar_tarjeta(fila, i)
