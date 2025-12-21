@@ -29,7 +29,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. MOTOR DE INFORMACIÓN (CORREGIDA ERRATA URL) ---
+# --- 2. MOTOR DE INFORMACIÓN ---
 def traducir_a_coloquial(atc_nombre):
     atc_nombre = (atc_nombre or "").lower()
     mapeo = {
@@ -51,11 +51,12 @@ def traducir_a_coloquial(atc_nombre):
 @st.cache_data(ttl=604800)
 def buscar_info_web(nombre):
     try:
-        res = requests.get(f"https://cima.aemps.es/cima/rest/medicamentos?nombre={nombre.split()[0]}", timeout=5).json()
+        # Limpiamos el nombre para la búsqueda en API
+        busqueda = nombre.split()[0].strip()
+        res = requests.get(f"https://cima.aemps.es/cima/rest/medicamentos?nombre={busqueda}", timeout=5).json()
         if res.get('resultados'):
             m = res['resultados'][0]
             p_activo = m.get('principiosActivos', [{'nombre': 'Desconocido'}])[0]['nombre'].capitalize()
-            # CORREGIDO: medicamento (antes mendicamento)
             det = requests.get(f"https://cima.aemps.es/cima/rest/medicamento?nregistro={m['nregistro']}").json()
             uso_tecnico = det.get('atcs', [{'nombre': 'Uso general'}])[0]['nombre']
             return {"p": p_activo, "e": traducir_a_coloquial(uso_tecnico)}
@@ -118,22 +119,25 @@ with st.sidebar:
         try:
             h_raw = ws_hist.get_all_values()
             if len(h_raw) > 1:
-                # Filtrado robusto para evitar errores de filas incompletas
                 df_h = pd.DataFrame([fil for fil in h_raw[1:] if len(fil) >= 4])
                 if not df_h.empty:
                     df_h = df_h.iloc[:, :4]
                     df_h.columns = ['Fecha', 'Usuario', 'Acción', 'Medicina']
                     st.dataframe(df_h.iloc[::-1].head(10), hide_index=True, use_container_width=True)
-        except: st.caption("Sin historial disponible.")
+        except: st.caption("Historial no disponible.")
 
-# --- 6. DATOS Y BUSCADOR ---
+# --- 6. DATOS Y BUSCADOR (FILTRADO BLINDADO) ---
 try:
+    # Obtenemos todos los datos y limpiamos de golpe
     data_inv = ws_inv.get_all_values()
     if len(data_inv) > 1:
         headers = [str(h).strip() for h in data_inv[0]]
         df_master = pd.DataFrame(data_inv[1:], columns=headers)
+        
+        # Normalización total de columnas críticas
         df_master["Stock"] = pd.to_numeric(df_master["Stock"], errors='coerce').fillna(0).astype(int)
         df_master["Nombre"] = df_master["Nombre"].astype(str).str.strip()
+        df_master["Ubicacion"] = df_master["Ubicacion"].astype(str).str.strip()
         df_master["idx"] = range(2, len(df_master) + 2)
     else:
         st.info("Inventario vacío.")
@@ -143,17 +147,21 @@ except:
     st.stop()
 
 st.title("💊 Inventario Médico")
-bus = st_keyup("🔍 Buscar medicamento...", key="search_admin_fix")
 
+# BUSCADOR ESTABLE: key estática y limpieza de caracteres
+bus = st_keyup("🔍 Escribir para buscar...", key="main_search_input")
+
+# Filtro base por stock
 df_vis = df_master[df_master["Stock"] > 0].copy()
 
-if bus and bus.strip() != "":
-    query = bus.strip().upper()
-    df_vis = df_vis[df_vis["Nombre"].str.upper().str.contains(query, na=False)]
+# APLICACIÓN DE BÚSQUEDA (Solo si hay texto real escrito)
+if bus and bus.strip():
+    txt = bus.strip().upper()
+    df_vis = df_vis[df_vis["Nombre"].str.upper().str.contains(txt, na=False)]
 
 tabs = st.tabs(["📋 Todos", "💊 Vitrina", "📦 Armario"])
 
-# --- 7. TARJETAS ---
+# --- 7. FUNCIÓN DE RENDERIZADO ---
 def pintar_tarjeta(fila, k):
     n, stock, ubi, idx, cad = fila["Nombre"], fila["Stock"], fila["Ubicacion"], fila["idx"], fila["Caducidad"]
     
@@ -168,24 +176,26 @@ def pintar_tarjeta(fila, k):
     st.markdown(f'<div class="tarjeta-med" style="border-left: 8px solid {color};"><b>{n}</b> <span style="float:right; font-size:0.7em;">{status}</span><br><small>{stock} uds. | {ubi} | Vence: {cad}</small></div>', unsafe_allow_html=True)
     
     with st.expander("🤔 Info"):
-        notas_all = ws_notas.get_all_values()
-        nota_m = next((r for r in notas_all if r[0] == n), None)
-        p_f, d_f = (nota_m[1], nota_m[2]) if nota_m else ("?", "?")
-        
-        if p_f == "?":
-            info = buscar_info_web(n)
-            if info: p_f, d_f = info['p'], info['e']
+        try:
+            notas_all = ws_notas.get_all_values()
+            nota_m = next((r for r in notas_all if r[0] == n), None)
+            p_f, d_f = (nota_m[1], nota_m[2]) if nota_m else ("?", "?")
             
-        st.markdown(f'<b>P. Activo:</b> {p_f}<br><b>💡 Uso:</b> {d_f}', unsafe_allow_html=True)
-        
-        if st.session_state.role == "admin":
-            with st.form(f"ed_{idx}"):
-                np, nd = st.text_input("P. Activo", p_f), st.text_area("Uso", d_f)
-                if st.form_submit_button("Guardar"):
-                    celda = ws_notas.find(n)
-                    if celda: ws_notas.update_row(celda.row, [n, np, nd])
-                    else: ws_notas.append_row([n, np, nd])
-                    st.rerun()
+            if p_f == "?":
+                info = buscar_info_web(n)
+                if info: p_f, d_f = info['p'], info['e']
+                
+            st.markdown(f'<b>P. Activo:</b> {p_f}<br><b>💡 Uso:</b> {d_f}', unsafe_allow_html=True)
+            
+            if st.session_state.role == "admin":
+                with st.form(f"ed_{idx}"):
+                    np, nd = st.text_input("P. Activo", p_f), st.text_area("Uso", d_f)
+                    if st.form_submit_button("Guardar"):
+                        celda = ws_notas.find(n)
+                        if celda: ws_notas.update_row(celda.row, [n, np, nd])
+                        else: ws_notas.append_row([n, np, nd])
+                        st.rerun()
+        except: st.caption("No se pudo cargar la información.")
 
     c1, c2 = st.columns([3, 1])
     if c1.button(f"💊 RETIRAR", key=f"r_{idx}_{k}"):
@@ -199,8 +209,17 @@ def pintar_tarjeta(fila, k):
             registrar_evento("ELIMINADO", n)
             st.rerun()
 
-for i in range(3):
+# --- 8. RENDERIZADO POR PESTAÑAS ---
+for i, ubi_f in enumerate(["", "vitrina", "armario"]):
     with tabs[i]:
-        ubi_f = ["", "vitrina", "armario"][i]
-        df_tab = df_vis if i == 0 else df_vis[df_vis["Ubicacion"].astype(str).str.contains(ubi_f, case=False, na=False)]
-        for _, f in df_tab.iterrows(): pintar_tarjeta(f, f"tab{i}")
+        # Filtrado por ubicación sobre los resultados de la búsqueda
+        if ubi_f == "":
+            df_final = df_vis
+        else:
+            df_final = df_vis[df_vis["Ubicacion"].str.contains(ubi_f, case=False, na=False)]
+        
+        if not df_final.empty:
+            for _, f in df_final.iterrows():
+                pintar_tarjeta(f, f"tab{i}")
+        else:
+            st.caption("Sin resultados para esta búsqueda o ubicación.")
