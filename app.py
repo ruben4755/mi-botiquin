@@ -21,9 +21,6 @@ st.markdown("""
         background: #262730; border-radius: 10px; padding: 15px;
         color: #eeeeee !important; border: 1px solid #444; margin: 10px 0;
     }
-    .status-badge {
-        padding: 4px 10px; border-radius: 15px; font-size: 0.8em; font-weight: bold;
-    }
     [data-testid="stSidebar"] { 
         background-color: #1a1c23 !important; 
         min-width: 350px !important; 
@@ -32,18 +29,18 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. MOTOR DE INFORMACIÓN Y TRADUCCIÓN ---
+# --- 2. MOTOR DE INFORMACIÓN ---
 def traducir_a_coloquial(atc_nombre):
     atc_nombre = (atc_nombre or "").lower()
     mapeo = {
         "analgésicos": "Para aliviar dolores (cabeza, cuerpo, articulaciones).",
         "antipiréticos": "Para ayudar a bajar la fiebre.",
-        "antiinflamatorios": "Para reducir la hinchazón y el dolor por golpes.",
+        "antiinflamatorios": "Para reducir la hinchazón y el dolor.",
         "inhibidores de la bomba de protones": "Protector de estómago. Evita ardores.",
-        "antibacterianos": "Antibiótico para combatir infecciones por bacterias.",
-        "antihistamínicos": "Para frenar alergias, estornudos y picores.",
+        "antibacterianos": "Antibiótico para combatir infecciones.",
+        "antihistamínicos": "Para alergias, estornudos y picores.",
         "antitusígenos": "Para calmar la tos seca.",
-        "ansiolíticos": "Para calmar los nervios o dormir mejor.",
+        "ansiolíticos": "Para calmar los nervios o dormir.",
         "antihipertensivos": "Para la tensión arterial.",
         "antidiabéticos": "Para el azúcar en sangre."
     }
@@ -64,7 +61,7 @@ def buscar_info_web(nombre):
     except: return None
     return None
 
-# --- 3. CONEXIÓN A GOOGLE SHEETS ---
+# --- 3. CONEXIÓN ---
 @st.cache_resource
 def iniciar_conexion():
     try:
@@ -84,50 +81,48 @@ def registrar_evento(accion, med):
         ws_hist.append_row([datetime.now().strftime("%d/%m %H:%M"), st.session_state.user, accion, med])
     except: pass
 
-# --- 4. SISTEMA DE LOGIN ---
+# --- 4. LOGIN ---
 if "logueado" not in st.session_state: st.session_state["logueado"] = False
 if not st.session_state["logueado"]:
-    st.title("🔐 Acceso al Sistema Médico")
+    st.title("🔐 Acceso")
     with st.form("login"):
         u, p = st.text_input("Usuario"), st.text_input("Contraseña", type="password")
         if st.form_submit_button("Entrar"):
             if "users" in st.secrets and u in st.secrets["users"] and str(p) == str(st.secrets["users"][u]):
                 st.session_state.update({"logueado": True, "user": u, "role": st.secrets["roles"].get(u, "user")})
                 st.rerun()
-            else: st.error("Credenciales incorrectas")
     st.stop()
 
-# --- 5. BARRA LATERAL (HISTORIAL SOLO ADMIN) ---
+# --- 5. SIDEBAR ---
 with st.sidebar:
     st.header(f"👤 {st.session_state.user.capitalize()}")
-    st.caption(f"Perfil: {st.session_state.role.upper()}")
     if st.button("🚪 Cerrar Sesión"): st.session_state.clear(); st.rerun()
     
     if st.session_state.role == "admin":
         st.divider()
-        st.subheader("➕ Añadir Medicamento")
+        st.subheader("➕ Nuevo Medicamento")
         with st.form("nuevo_med", clear_on_submit=True):
             n = st.text_input("Nombre")
             s = st.number_input("Cantidad", 1)
             f = st.date_input("Caducidad")
-            u = st.selectbox("Ubicación", ["Medicación de vitrina", "Medicación de armario"])
-            if st.form_submit_button("Guardar en Stock"):
+            u = st.selectbox("Lugar", ["Medicación de vitrina", "Medicación de armario"])
+            if st.form_submit_button("Añadir"):
                 if n:
                     ws_inv.append_row([n.upper().strip(), int(s), f.strftime("%Y-%m-%d"), u])
                     registrar_evento("ALTA", n.upper())
                     st.rerun()
 
         st.divider()
-        st.subheader("🕒 Historial de Movimientos")
+        st.subheader("🕒 Historial (Admin)")
         try:
             h_raw = ws_hist.get_all_values()
             if len(h_raw) > 1:
                 df_h = pd.DataFrame([fil for fil in h_raw[1:] if len(fil) >= 3]).iloc[:, :4]
                 df_h.columns = ['Fecha', 'Usuario', 'Acción', 'Medicina']
                 st.dataframe(df_h.iloc[::-1].head(10), hide_index=True, use_container_width=True)
-        except: st.caption("Historial no disponible.")
+        except: st.caption("Sin historial.")
 
-# --- 6. PROCESAMIENTO DE DATOS ---
+# --- 6. DATOS Y BUSCADOR (CORREGIDO) ---
 try:
     data_inv = ws_inv.get_all_values()
     headers = [str(h).strip() for h in data_inv[0]]
@@ -135,23 +130,22 @@ try:
     df_master["Stock"] = pd.to_numeric(df_master["Stock"], errors='coerce').fillna(0).astype(int)
     df_master["idx"] = range(2, len(df_master) + 2)
 except:
-    st.error("Error cargando base de datos.")
+    st.error("Error cargando datos.")
     st.stop()
 
-st.title("💊 Inventario de Medicación")
+st.title("💊 Inventario Médico")
+bus = st_keyup("🔍 Buscar...", key="search_final")
 
-# --- CORRECCIÓN ERROR DE BÚSQUEDA ---
-bus = st_keyup("🔍 Buscar por nombre...", key="search_med_fix")
-
+# Filtro de stock básico
 df_vis = df_master[df_master["Stock"] > 0].copy()
 
-# Validación para evitar error al borrar el buscador
-if bus and bus.strip() != "":
-    df_vis = df_vis[df_vis["Nombre"].str.contains(bus.upper(), na=False, case=False)]
+# APLICACIÓN SEGURA DEL FILTRO
+if bus and len(bus.strip()) > 0:
+    df_vis = df_vis[df_vis["Nombre"].astype(str).str.contains(bus.upper(), na=False)]
 
 tabs = st.tabs(["📋 Todos", "💊 Vitrina", "📦 Armario"])
 
-# --- 7. COMPONENTE DE TARJETA ---
+# --- 7. TARJETAS ---
 def pintar_tarjeta(fila, k):
     n, stock, ubi, idx, cad = fila["Nombre"], fila["Stock"], fila["Ubicacion"], fila["idx"], fila["Caducidad"]
     
@@ -159,34 +153,32 @@ def pintar_tarjeta(fila, k):
         f_c = datetime.strptime(cad, "%Y-%m-%d")
         hoy = datetime.now()
         if f_c < hoy: status, color = "🔴 CADUCADO", "#ff4b4b"
-        elif f_c < hoy + timedelta(days=30): status, color = "🟠 PRÓXIMO A CADUCAR", "#ffa500"
-        else: status, color = "🟢 SIN RIESGO", "#28a745"
-    except: status, color = "⚪ SIN FECHA", "#444"
+        elif f_c < hoy + timedelta(days=30): status, color = "🟠 PRÓXIMO", "#ffa500"
+        else: status, color = "🟢 OK", "#28a745"
+    except: status, color = "⚪ S/F", "#444"
 
-    st.markdown(f'<div class="tarjeta-med" style="border-left: 8px solid {color};"><b>{n}</b> <span style="float:right; font-size:0.7em;">{status}</span><br><small>{stock} uds. | {ubi} | Caducidad: {cad}</small></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="tarjeta-med" style="border-left: 8px solid {color};"><b>{n}</b> <span style="float:right; font-size:0.7em;">{status}</span><br><small>{stock} uds. | {ubi} | Vence: {cad}</small></div>', unsafe_allow_html=True)
     
-    with st.expander("🤔 ¿Para qué sirve?"):
+    with st.expander("🤔 Info"):
         notas_all = ws_notas.get_all_values()
         nota_m = next((r for r in notas_all if r[0] == n), None)
-        
         if nota_m: p_f, d_f = nota_m[1], nota_m[2]
         else:
             info = buscar_info_web(n)
-            p_f, d_f = (info['p'], info['e']) if info else ("Desconocido", "Sin descripción.")
-        
-        st.markdown(f'<div class="caja-info"><b>Principio Activo:</b> {p_f}<br><b>💡 Uso:</b> {d_f}</div>', unsafe_allow_html=True)
+            p_f, d_f = (info['p'], info['e']) if info else ("?", "?")
+        st.markdown(f'<b>Principio:</b> {p_f}<br><b>💡 Uso:</b> {d_f}', unsafe_allow_html=True)
         
         if st.session_state.role == "admin":
             with st.form(f"ed_{idx}"):
-                np, nd = st.text_input("Editar P. Activo", p_f), st.text_area("Editar Uso", d_f)
-                if st.form_submit_button("Actualizar"):
+                np, nd = st.text_input("P. Activo", p_f), st.text_area("Uso", d_f)
+                if st.form_submit_button("Guardar"):
                     celda = ws_notas.find(n)
                     if celda: ws_notas.update_row(celda.row, [n, np, nd])
                     else: ws_notas.append_row([n, np, nd])
                     st.rerun()
 
     c1, c2 = st.columns([3, 1])
-    if c1.button(f"💊 RETIRAR UNIDAD", key=f"r_{idx}_{k}"):
+    if c1.button(f"💊 RETIRAR", key=f"r_{idx}_{k}"):
         ws_inv.update_cell(idx, headers.index("Stock") + 1, max(0, int(stock) - 1))
         registrar_evento("RETIRADA", n)
         st.rerun()
@@ -197,11 +189,8 @@ def pintar_tarjeta(fila, k):
             registrar_evento("ELIMINADO", n)
             st.rerun()
 
-# --- 8. RENDERIZADO ---
 for i in range(3):
     with tabs[i]:
         ubi_f = ["", "vitrina", "armario"][i]
         filtro = df_vis if i==0 else df_vis[df_vis["Ubicacion"].str.contains(ubi_f, case=False)]
-        if not filtro.empty:
-            for _, f in filtro.iterrows(): pintar_tarjeta(f, f"tab{i}")
-        else: st.caption("No hay medicamentos en esta sección.")
+        for _, f in filtro.iterrows(): pintar_tarjeta(f, f"tab{i}")
