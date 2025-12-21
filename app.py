@@ -150,7 +150,6 @@ df_vis = df_master[df_master["Stock"] > 0].copy() if not df_master.empty else pd
 
 if raw_query and not df_vis.empty:
     q = normalize(raw_query)
-    # Búsqueda ultra inteligente: cruza Nombre y Ubicación al mismo tiempo
     df_vis = df_vis[
         df_vis.apply(lambda r: q in normalize(r["Nombre"]) or q in normalize(r["Ubicacion"]), axis=1)
     ]
@@ -212,13 +211,19 @@ def dibujar_tarjeta(fila, key_tab):
                 if encontrado:
                     ws_inv.delete_rows(encontrado.row)
                     st.rerun()
-    except: pass
+    except:
+        pass
 
 # --- 9. RENDER ---
-for i, filtro in enumerate(["", "vitrina", "armario"]):
+filtros_ubi = ["", "vitrina", "armario"]
+for i, filtro in enumerate(filtros_ubi):
     with tabs[i]:
-        df_f = df_vis if not filtro else df_vis[df_vis["Ubicacion"].str.contains(filtro, case=False)]
-        if df_f.empty:
+        if df_vis.empty:
             st.caption("No hay resultados.")
         else:
-            for _, fila in df_f.iterrows(): dibujar_tarjeta(fila, i)
+            df_f = df_vis if not filtro else df_vis[df_vis["Ubicacion"].str.contains(filtro, case=False)]
+            if df_f.empty:
+                st.caption("Sin medicamentos en esta sección.")
+            else:
+                for _, fila in df_f.iterrows():
+                    dibujar_tarjeta(fila, i)
