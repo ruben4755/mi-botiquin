@@ -11,8 +11,7 @@ from st_keyup import st_keyup
 # --- 1. CONFIGURACIÓN E INTERFAZ ---
 st.set_page_config(page_title="Gestión Médica Pro", layout="wide", page_icon="💊")
 
-# --- LÓGICA DE REFRESCO AUTOMÁTICO (CORREGIDA LÍNEA 10) ---
-# Refresca la página cada 30 segundos sin usar librerías externas
+# --- LÓGICA DE REFRESCO AUTOMÁTICO ---
 if "fragment_reload" not in st.session_state:
     st.session_state.fragment_reload = 0
 
@@ -154,10 +153,8 @@ with st.sidebar:
             if len(h_data) > 1:
                 df_h = pd.DataFrame(h_data[1:], columns=h_data[0]).tail(10)
                 st.dataframe(df_h.iloc[::-1], use_container_width=True, hide_index=True)
-            else:
-                st.caption("No hay registros.")
-        except:
-            st.error("Error al cargar historial.")
+            else: st.caption("No hay registros.")
+        except: st.error("Error al cargar historial.")
 
 # --- 7. BÚSQUEDA ---
 def normalize(t):
@@ -192,7 +189,6 @@ def dibujar_tarjeta(fila, key_tab):
         with st.expander("🤔 ¿Para qué sirve?"):
             notas_data = ws_not.get_all_values()
             nota_m = next((r for r in notas_data if r[0] == nombre), None)
-            
             if nota_m: p_act, d_uso = nota_m[1], nota_m[2]
             else:
                 info = buscar_info_web(nombre)
@@ -212,18 +208,35 @@ def dibujar_tarjeta(fila, key_tab):
                         time.sleep(1)
                         st.rerun()
 
-        c1, c2 = st.columns([4, 1])
-        if c1.button(f"💊 RETIRAR 1 UNIDAD", key=f"ret_{nombre}_{key_tab}"):
+        # BOTONES DE ACCIÓN (Corregido y Añadido +)
+        c1, c2, c3 = st.columns([2, 2, 1])
+        
+        # BOTÓN RETIRAR (-)
+        if c1.button(f"💊 QUITAR 1", key=f"ret_{nombre}_{key_tab}"):
             st.session_state.last_activity = time.time()
             celda = ws_inv.find(nombre)
             if celda:
-                ws_inv.update_cell(celda.row, 2, max(0, stock - 1))
-                ws_his.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "RETIRADA", nombre])
-                st.toast(f"✅ {st.session_state.user} retiró {nombre}")
+                nueva_cantidad = max(0, stock - 1)
+                ws_inv.update_cell(celda.row, 2, nueva_cantidad)
+                ws_his.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "RETIRADA (-1)", nombre])
+                st.toast(f"✅ {nombre} retirado.")
                 time.sleep(0.5)
                 st.rerun()
 
-        if st.session_state.role == "admin" and c2.button("🗑", key=f"del_{nombre}_{key_tab}"):
+        # BOTÓN AÑADIR (+)
+        if c2.button(f"➕ AÑADIR 1", key=f"add_{nombre}_{key_tab}"):
+            st.session_state.last_activity = time.time()
+            celda = ws_inv.find(nombre)
+            if celda:
+                nueva_cantidad = stock + 1
+                ws_inv.update_cell(celda.row, 2, nueva_cantidad)
+                ws_his.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "AUMENTO (+1)", nombre])
+                st.toast(f"✅ {nombre} añadido.")
+                time.sleep(0.5)
+                st.rerun()
+
+        # BOTÓN ELIMINAR (Solo Admin)
+        if st.session_state.role == "admin" and c3.button("🗑", key=f"del_{nombre}_{key_tab}"):
             celda = ws_inv.find(nombre)
             if celda:
                 ws_inv.delete_rows(celda.row)
