@@ -51,8 +51,7 @@ def traducir_a_coloquial(nombre_tecnico):
         "antitusígenos": "Para calmar la tos seca.",
         "ansiolíticos": "Para los nervios o ayudarte a dormir.",
         "antihipertensivos": "Para la tensión alta.",
-        "antidiabéticos": "Para el azúcar en sangre.",
-        "hipolipemiantes": "Para bajar el colesterol."
+        "antidiabéticos": "Para el azúcar en sangre."
     }
     for clave, explicacion in mapeo.items():
         if clave in nombre_tecnico: return explicacion
@@ -113,7 +112,7 @@ def cargar_inventario():
 
 df_master = cargar_inventario()
 
-# --- 6. SIDEBAR (FORMULARIO E HISTORIAL DEBAJO) ---
+# --- 6. SIDEBAR (FORMULARIO E HISTORIAL) ---
 with st.sidebar:
     st.header(f"👤 {st.session_state.user.capitalize()}")
     if st.button("🚪 Salir"): 
@@ -137,19 +136,17 @@ with st.sidebar:
                     time.sleep(1)
                     st.rerun()
 
-        # HISTORIAL JUSTO DEBAJO DE AÑADIR (Solo para Admin)
         st.divider()
         st.subheader("📜 Historial de Movimientos")
         try:
             h_data = ws_his.get_all_values()
             if len(h_data) > 1:
-                # Cabeceras: Fecha, Usuario, Acción, Medicamento
                 df_h = pd.DataFrame(h_data[1:], columns=h_data[0]).tail(10)
                 st.dataframe(df_h.iloc[::-1], use_container_width=True, hide_index=True)
             else:
-                st.caption("No hay registros en el historial.")
+                st.caption("No hay registros.")
         except:
-            st.error("Error al acceder a la pestaña Historial.")
+            st.error("Error al cargar historial.")
 
 # --- 7. BÚSQUEDA ---
 def normalize(t):
@@ -184,12 +181,28 @@ def dibujar_tarjeta(fila, key_tab):
         with st.expander("🤔 ¿Para qué sirve?"):
             notas_data = ws_not.get_all_values()
             nota_m = next((r for r in notas_data if r[0] == nombre), None)
+            
             if nota_m: p_act, d_uso = nota_m[1], nota_m[2]
             else:
                 info = buscar_info_web(nombre)
                 p_act, d_uso = (info['p'], info['e']) if info else ("No disponible", "Sin datos.")
             
             st.markdown(f'<div class="caja-info"><b>Principio Activo:</b> {p_act}<br><br><b>Descripción:</b> {d_uso}</div>', unsafe_allow_html=True)
+            
+            # NUEVO: Edición de descripción solo para ADMIN
+            if st.session_state.role == "admin":
+                with st.form(f"edit_info_{nombre}_{key_tab}"):
+                    nuevo_p = st.text_input("Editar Principio Activo", p_act)
+                    nueva_d = st.text_area("Editar Descripción Coloquial", d_uso)
+                    if st.form_submit_button("Guardar cambios en descripción"):
+                        celda = ws_not.find(nombre)
+                        if celda:
+                            ws_not.update_row(celda.row, [nombre, nuevo_p, nueva_d])
+                        else:
+                            ws_not.append_row([nombre, nuevo_p, nueva_d])
+                        st.success("Información actualizada.")
+                        time.sleep(1)
+                        st.rerun()
 
         c1, c2 = st.columns([4, 1])
         if c1.button(f"💊 RETIRAR 1 UNIDAD", key=f"ret_{nombre}_{key_tab}"):
@@ -197,7 +210,6 @@ def dibujar_tarjeta(fila, key_tab):
             celda = ws_inv.find(nombre)
             if celda:
                 ws_inv.update_cell(celda.row, 2, max(0, stock - 1))
-                # Registro con todos los datos solicitados
                 ws_his.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "RETIRADA", nombre])
                 st.toast(f"✅ {st.session_state.user} retiró {nombre}")
                 time.sleep(1)
