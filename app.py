@@ -3,11 +3,11 @@ import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
+import calendar
 
 # --- 1. CONFIGURACIÓN ---
 st.set_page_config(page_title="Gestión Médica Pro", layout="wide", page_icon="💊")
 
-# Estilos CSS corregidos
 st.markdown("""
     <style>
     .tarjeta-med { 
@@ -22,7 +22,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. LOGIN (BLOQUEO TOTAL) ---
+# --- 2. LOGIN ---
 if "logueado" not in st.session_state:
     st.session_state["logueado"] = False
 
@@ -41,7 +41,7 @@ if not st.session_state["logueado"]:
                 st.error("Credenciales incorrectas")
     st.stop()
 
-# --- 3. CONEXIÓN (SOLO SI ESTÁ LOGUEADO) ---
+# --- 3. CONEXIÓN ---
 @st.cache_resource
 def iniciar_conexion():
     try:
@@ -63,33 +63,21 @@ ws_inv, ws_log = iniciar_conexion()
 if not ws_inv: st.stop()
 
 # --- 4. CARGA DE DATOS ---
-try:
-    data = ws_inv.get_all_values()
-    headers = [h.strip() for h in data[0]]
-    df_master = pd.DataFrame(data[1:], columns=headers)
-    
-    # Asegurar que las columnas existen
-    columnas_necesarias = ["Nombre", "Stock", "Caducidad", "Ubicacion"]
-    for col in columnas_necesarias:
-        if col not in df_master.columns:
-            st.error(f"Falta la columna '{col}' en tu Excel. Revisa los nombres.")
-            st.stop()
+data = ws_inv.get_all_values()
+headers = [h.strip() for h in data[0]]
+df_master = pd.DataFrame(data[1:], columns=headers)
+df_master["Stock"] = pd.to_numeric(df_master["Stock"], errors='coerce').fillna(0).astype(int)
+df_master["idx_excel"] = range(2, len(df_master) + 2)
+df_visible = df_master[df_master["Stock"] > 0].copy()
 
-    df_master["Stock"] = pd.to_numeric(df_master["Stock"], errors='coerce').fillna(0).astype(int)
-    df_master["idx_excel"] = range(2, len(df_master) + 2)
-    df_visible = df_master[df_master["Stock"] > 0].copy()
-except Exception as e:
-    st.error(f"Error procesando datos: {e}")
-    st.stop()
-
-# --- 5. FUNCIONES ---
+# --- 5. FUNCIÓN TARJETAS ---
 def pintar_tarjeta(fila, k):
     nombre, stock, cad, ubi, idx = fila["Nombre"], fila["Stock"], fila["Caducidad"], fila["Ubicacion"], fila["idx_excel"]
     
-    # Lógica de colores (Borde dinámico)
     color_b = "#28a745"
     alerta = ""
     try:
+        # Formato esperado: YYYY-MM-DD (aunque el usuario solo meta mes/año, guardaremos el último día)
         f_cad = datetime.strptime(cad, "%Y-%m-%d")
         if f_cad < datetime.now():
             color_b = "#dc3545"
@@ -105,7 +93,7 @@ def pintar_tarjeta(fila, k):
                 <b>{nombre}</b> <span style="color:{color_b}; font-weight:bold;">{alerta}</span>
             </div>
             <span>Stock: {stock}</span> | <small>{ubi}</small><br>
-            <small>Vence: {cad}</small>
+            <small>Vence: {datetime.strptime(cad, "%Y-%m-%d").strftime("%m/%Y") if cad else 'S/D'}</small>
         </div>
     """, unsafe_allow_html=True)
     
@@ -124,10 +112,9 @@ def pintar_tarjeta(fila, k):
             ws_inv.delete_rows(idx)
             st.rerun()
 
-# --- 6. INTERFAZ ---
+# --- 6. INTERFAZ PRINCIPAL ---
 st.title("💊 Inventario Médico")
 
-# Buscador Rápido (Funciona en móvil)
 opciones = sorted(df_visible["Nombre"].unique().tolist())
 sel = st.selectbox("🔍 BUSCAR:", [""] + opciones)
 
@@ -149,8 +136,37 @@ with t[2]:
 with t[3]:
     for _, f in df_visible[df_visible["Ubicacion"] == "Medicación de armario"].iterrows(): pintar_tarjeta(f, "ar")
 
+# --- 7. SIDEBAR Y AÑADIR MEDICAMENTO ---
 with st.sidebar:
     st.write(f"Usuario: {st.session_state.user}")
     if st.button("Salir"):
         st.session_state.clear()
         st.rerun()
+    
+    if st.session_state.role == "admin":
+        st.divider()
+        st.subheader("➕ Añadir Medicamento")
+        with st.form("nuevo_med", clear_on_submit=True):
+            nombre_n = st.text_input("Nombre del Medicamento").upper()
+            stock_n = st.number_input("Cantidad inicial", min_value=1, value=1)
+            
+            # Selector de Mes y Año
+            col_m, col_y = st.columns(2)
+            mes_n = col_m.selectbox("Mes", list(range(1, 13)), index=datetime.now().month - 1)
+            anio_n = col_y.selectbox("Año", list(range(datetime.now().year, datetime.now().year + 10)))
+            
+            ubi_n = st.selectbox("Ubicación", ["Medicación de vitrina", "Medicación de armario"])
+            
+            if st.form_submit_button("Guardar en Inventario"):
+                if nombre_n:
+                    # Calculamos el último día del mes elegido para la fecha interna
+                    ultimo_dia = calendar.monthrange(anio_n, mes_n)[1]
+                    fecha_interna = f"{anio_n}-{mes_n:02d}-{ultimo_dia:02d}"
+                    
+                    ws_inv.append_row([nombre_n, int(stock_n), fecha_interna, ubi_n])
+                    ws_log.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "ALTA", nombre_n, str(stock_n)])
+                    st.success("Añadido con éxito")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("El nombre es obligatorio")
