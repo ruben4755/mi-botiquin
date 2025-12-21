@@ -4,10 +4,10 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 
-# --- 1. CONFIGURACIÓN DE PÁGINA ---
+# --- 1. CONFIGURACIÓN ---
 st.set_page_config(page_title="Gestión Médica Pro", layout="wide", page_icon="💊")
 
-# Estilos CSS
+# Estilos CSS corregidos
 st.markdown("""
     <style>
     .tarjeta-med { 
@@ -22,18 +22,18 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. CONTROL DE ACCESO (LOGIN) ---
-if "autenticado" not in st.session_state:
-    st.session_state["autenticado"] = False
+# --- 2. LOGIN (BLOQUEO TOTAL) ---
+if "logueado" not in st.session_state:
+    st.session_state["logueado"] = False
 
-if not st.session_state["autenticado"]:
-    st.title("🔐 Acceso al Sistema")
-    with st.form("login_form"):
+if not st.session_state["logueado"]:
+    st.title("🔐 Acceso")
+    with st.form("login_f"):
         u = st.text_input("Usuario")
         p = st.text_input("Contraseña", type="password")
         if st.form_submit_button("Entrar"):
             if "users" in st.secrets and u in st.secrets["users"] and str(p) == str(st.secrets["users"][u]):
-                st.session_state["autenticado"] = True
+                st.session_state["logueado"] = True
                 st.session_state["user"] = u
                 st.session_state["role"] = st.secrets.get("roles", {}).get(u, "user")
                 st.rerun()
@@ -41,9 +41,9 @@ if not st.session_state["autenticado"]:
                 st.error("Credenciales incorrectas")
     st.stop()
 
-# --- 3. CONEXIÓN A DATOS (SOLO TRAS LOGIN) ---
+# --- 3. CONEXIÓN (SOLO SI ESTÁ LOGUEADO) ---
 @st.cache_resource
-def obtener_conexion():
+def iniciar_conexion():
     try:
         scope = ["https://www.googleapis.com/auth/spreadsheets"]
         creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
@@ -59,68 +59,98 @@ def obtener_conexion():
         st.error(f"Error de conexión: {e}")
         return None, None
 
-ws_inv, ws_log = obtener_conexion()
+ws_inv, ws_log = iniciar_conexion()
+if not ws_inv: st.stop()
 
-if ws_inv is None:
-    st.warning("Error al conectar con Google Sheets. Revisa tus Secrets.")
+# --- 4. CARGA DE DATOS ---
+try:
+    data = ws_inv.get_all_values()
+    headers = [h.strip() for h in data[0]]
+    df_master = pd.DataFrame(data[1:], columns=headers)
+    
+    # Asegurar que las columnas existen
+    columnas_necesarias = ["Nombre", "Stock", "Caducidad", "Ubicacion"]
+    for col in columnas_necesarias:
+        if col not in df_master.columns:
+            st.error(f"Falta la columna '{col}' en tu Excel. Revisa los nombres.")
+            st.stop()
+
+    df_master["Stock"] = pd.to_numeric(df_master["Stock"], errors='coerce').fillna(0).astype(int)
+    df_master["idx_excel"] = range(2, len(df_master) + 2)
+    df_visible = df_master[df_master["Stock"] > 0].copy()
+except Exception as e:
+    st.error(f"Error procesando datos: {e}")
     st.stop()
 
-# Carga de datos fresca
-data = ws_inv.get_all_values()
-if not data:
-    st.error("El Excel está vacío.")
-    st.stop()
-
-headers = [h.strip() for h in data[0]]
-df_master = pd.DataFrame(data[1:], columns=headers)
-df_master["Stock"] = pd.to_numeric(df_master["Stock"], errors='coerce').fillna(0).astype(int)
-df_master["idx_excel"] = range(2, len(df_master) + 2)
-df_visible = df_master[df_master["Stock"] > 0].copy()
-
-# --- 4. FUNCIONES DE INTERFAZ ---
-def registrar_log(accion, med, stock):
-    fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
-    ws_log.append_row([fecha, st.session_state.user, accion, med, str(stock)])
-
+# --- 5. FUNCIONES ---
 def pintar_tarjeta(fila, k):
     nombre, stock, cad, ubi, idx = fila["Nombre"], fila["Stock"], fila["Caducidad"], fila["Ubicacion"], fila["idx_excel"]
     
-    color_borde = "#28a745"
-    texto_alerta = ""
-    
+    # Lógica de colores (Borde dinámico)
+    color_b = "#28a745"
+    alerta = ""
     try:
-        fecha_cad = datetime.strptime(cad, "%Y-%m-%d")
-        hoy = datetime.now()
-        if fecha_cad < hoy:
-            color_borde = "#dc3545"
-            texto_alerta = "⚠ CADUCADO"
-        elif fecha_cad <= hoy + timedelta(days=60):
-            color_borde = "#ffc107"
-            texto_alerta = "⏳ REVISAR"
-    except:
-        pass
+        f_cad = datetime.strptime(cad, "%Y-%m-%d")
+        if f_cad < datetime.now():
+            color_b = "#dc3545"
+            alerta = "⚠ CADUCADO"
+        elif f_cad <= datetime.now() + timedelta(days=60):
+            color_b = "#ffc107"
+            alerta = "⏳ REVISAR"
+    except: pass
 
-    with st.container():
-        st.markdown(f"""
-            <div class="tarjeta-med" style="border-left: 10px solid {color_borde};">
-                <div style="display: flex; justify-content: space-between;">
-                    <b style="font-size:18px;">{nombre}</b>
-                    <span style="color:{color_borde}; font-weight:bold;">{texto_alerta}</span>
-                </div>
-                <span>Stock: <b>{stock}</b></span> | <small>{ubi}</small><br>
-                <small>Vence: {cad}</small>
+    st.markdown(f"""
+        <div class="tarjeta-med" style="border-left: 10px solid {color_b};">
+            <div style="display:flex; justify-content:space-between;">
+                <b>{nombre}</b> <span style="color:{color_b}; font-weight:bold;">{alerta}</span>
             </div>
-        """, unsafe_allow_html=True)
-        
-        c1, c2, c3 = st.columns([2, 1, 1])
-        if c1.button(f"💊 COGER", key=f"btn_{idx}_{k}"):
-            nuevo_stock = max(0, int(stock) - 1)
-            ws_inv.update_cell(idx, headers.index("Stock")+1, nuevo_stock)
-            registrar_log("RETIRADO", nombre, nuevo_stock)
+            <span>Stock: {stock}</span> | <small>{ubi}</small><br>
+            <small>Vence: {cad}</small>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    c1, c2, c3 = st.columns([2, 1, 1])
+    if c1.button(f"💊 COGER", key=f"c_{idx}_{k}"):
+        n = max(0, int(stock) - 1)
+        ws_inv.update_cell(idx, headers.index("Stock")+1, n)
+        ws_log.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "RETIRADO", nombre, str(n)])
+        st.rerun()
+    
+    if st.session_state.role == "admin":
+        if c2.button("➕", key=f"a_{idx}_{k}"):
+            ws_inv.update_cell(idx, headers.index("Stock")+1, int(stock) + 1)
             st.rerun()
-        
-        if st.session_state.role == "admin":
-            if c2.button("➕", key=f"add_{idx}_{k}"):
-                ws_inv.update_cell(idx, headers.index("Stock")+1, int(stock) + 1)
-                st.rerun()
-            if c3.button("🗑", key=f"del_{idx}_{k}"):
+        if c3.button("🗑", key=f"d_{idx}_{k}"):
+            ws_inv.delete_rows(idx)
+            st.rerun()
+
+# --- 6. INTERFAZ ---
+st.title("💊 Inventario Médico")
+
+# Buscador Rápido (Funciona en móvil)
+opciones = sorted(df_visible["Nombre"].unique().tolist())
+sel = st.selectbox("🔍 BUSCAR:", [""] + opciones)
+
+if sel:
+    pintar_tarjeta(df_visible[df_visible["Nombre"] == sel].iloc[0], "busq")
+    st.divider()
+
+t = st.tabs(["📋 Todo", "⚠ Alertas", "📁 Vitrina", "📁 Armario"])
+with t[0]:
+    for _, f in df_visible.iterrows(): pintar_tarjeta(f, "all")
+with t[1]:
+    limite = datetime.now() + timedelta(days=60)
+    for _, f in df_visible.iterrows():
+        try:
+            if datetime.strptime(f["Caducidad"], "%Y-%m-%d") <= limite: pintar_tarjeta(f, "w")
+        except: pass
+with t[2]:
+    for _, f in df_visible[df_visible["Ubicacion"] == "Medicación de vitrina"].iterrows(): pintar_tarjeta(f, "v")
+with t[3]:
+    for _, f in df_visible[df_visible["Ubicacion"] == "Medicación de armario"].iterrows(): pintar_tarjeta(f, "ar")
+
+with st.sidebar:
+    st.write(f"Usuario: {st.session_state.user}")
+    if st.button("Salir"):
+        st.session_state.clear()
+        st.rerun()
