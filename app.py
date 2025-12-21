@@ -142,7 +142,6 @@ def normalize(t):
 st.title("💊 Inventario Médico Pro")
 raw_query = st_keyup("🔍 ¿Qué buscas? (Nombre o Ubicación)", key="search_pro").strip()
 
-# Reiniciar actividad
 if raw_query:
     st.session_state.last_activity = time.time()
 
@@ -223,7 +222,7 @@ for i, filtro in enumerate(filtros_ubi):
         else:
             df_f = df_vis if not filtro else df_vis[df_vis["Ubicacion"].str.contains(filtro, case=False)]
             if df_f.empty:
-                st.caption("Sin medicamentos en esta sección.")
+                st.caption("Sin resultados.")
             else:
                 for _, fila in df_f.iterrows():
                     dibujar_tarjeta(fila, i)
