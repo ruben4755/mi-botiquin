@@ -83,17 +83,19 @@ def pintar_tarjeta(fila, k):
                 registrar_log("ELIMINADO", nombre, "0")
                 st.rerun()
 
-# --- 5. BARRA LATERAL (ORIGINAL) ---
+# --- 5. BARRA LATERAL (CON BUSCADOR DINÁMICO) ---
 with st.sidebar:
     st.title(f"Hola, {st.session_state.user}")
     if st.button("🚪 Cerrar Sesión"):
         for key in list(st.session_state.keys()): del st.session_state[key]
         st.rerun()
     
-    # BUSCADOR EN EL LATERAL (Filtra sin necesidad de Enter constante)
     st.divider()
-    st.subheader("🔍 Buscador rápido")
-    termino = st.text_input("Escribe nombre...", label_visibility="collapsed")
+    st.subheader("🔍 Buscador Instantáneo")
+    
+    # Este componente filtra según escribes y puedes elegir uno o varios
+    lista_meds = sorted(df_master[df_master["Stock"] > 0]["Nombre"].unique().tolist())
+    seleccionados = st.multiselect("Empieza a escribir el nombre...", options=lista_meds, label_visibility="collapsed")
 
     if st.session_state.role == "admin":
         st.divider()
@@ -111,20 +113,17 @@ with st.sidebar:
 # --- 6. CUERPO PRINCIPAL ---
 st.title("💊 Inventario Médico")
 
-# Filtramos según el buscador del sidebar
 df_visible = df_master[df_master["Stock"] > 0].copy()
 
-if termino:
-    df_filtrado = df_visible[df_visible["Nombre"].str.lower().str.contains(termino.lower())]
-    st.subheader(f"Resultados para: {termino}")
-    if not df_filtrado.empty:
-        for _, f in df_filtrado.iterrows():
-            pintar_tarjeta(f, "search")
-    else:
-        st.warning("No se han encontrado medicamentos.")
+# Si hay algo seleccionado en el buscador del sidebar
+if seleccionados:
+    st.subheader("📍 Resultados de búsqueda")
+    df_filtrado = df_visible[df_visible["Nombre"].isin(seleccionados)]
+    for _, f in df_filtrado.iterrows():
+        pintar_tarjeta(f, "search")
     st.divider()
 
-# Pestañas de siempre
+# Pestañas principales
 tabs = st.tabs(["📋 Todo", "⚠ Alertas", "📁 Vitrina", "📁 Armario"])
 with tabs[0]:
     for _, f in df_visible.iterrows(): pintar_tarjeta(f, "all")
