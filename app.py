@@ -8,7 +8,6 @@ import time
 # --- 1. CONFIGURACIÓN ---
 st.set_page_config(page_title="Gestión Médica Pro", layout="wide", page_icon="💊")
 
-# Estilos CSS
 st.markdown("""
     <style>
     @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.1; } 100% { opacity: 1; } }
@@ -18,30 +17,21 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. LOGIN (SISTEMA SIMPLIFICADO) ---
+# --- 2. LOGIN ---
 if "user" not in st.session_state:
     st.title("🔐 Acceso")
-    
-    # Comprobación de seguridad para ti
     if "users" not in st.secrets:
-        st.error("⚠ Error crítico: No encuentro la sección [users] en tus Secrets.")
+        st.error("⚠ Error: No se encuentra la sección [users] en Secrets.")
         st.stop()
 
     with st.form("login"):
         u = st.text_input("Usuario")
         p = st.text_input("Contraseña", type="password")
         if st.form_submit_button("Entrar"):
-            # Buscamos al usuario en la lista
             lista_usuarios = st.secrets["users"]
-            
             if u in lista_usuarios and str(p) == str(lista_usuarios[u]):
                 st.session_state["user"] = u
-                
-                # Buscamos el rol de forma segura
-                rol_asignado = "user" # Por defecto
-                if "roles" in st.secrets:
-                    rol_asignado = st.secrets["roles"].get(u, "user")
-                
+                rol_asignado = st.secrets.get("roles", {}).get(u, "user")
                 st.session_state["role"] = rol_asignado
                 st.session_state["last_activity"] = time.time()
                 st.rerun()
@@ -78,13 +68,18 @@ def conectar():
 ws_inv, ws_log = conectar()
 rows = ws_inv.get_all_values()
 headers = [h.strip() for h in rows[0]]
-df = pd.DataFrame(rows[1:], columns=headers)
+df_completo = pd.DataFrame(rows[1:], columns=headers)
+
+# --- LA CLAVE: FILTRAMOS PARA LA VISTA ---
+# Solo mostramos en la app lo que tenga Stock > 0
+df_completo["Stock"] = pd.to_numeric(df_completo["Stock"], errors='coerce').fillna(0).astype(int)
+df = df_completo[df_completo["Stock"] > 0].copy()
 
 def registrar_log(accion, med, stock):
     fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
     ws_log.append_row([fecha, st.session_state.user, accion, med, str(stock)])
 
-# --- 5. TARJETAS ---
+# --- 5. FUNCIÓN TARJETAS ---
 def pintar_tarjeta(fila, idx_excel, key_suffix):
     nombre = fila["Nombre"]
     stock = int(fila["Stock"])
@@ -93,7 +88,6 @@ def pintar_tarjeta(fila, idx_excel, key_suffix):
     es_admin = st.session_state.get("role") == "admin"
     
     bg = "#d4edda"
-    # Lógica de colores simplificada para evitar errores de fecha
     try:
         dt = datetime.strptime(caducidad, "%Y-%m-%d")
         if dt < datetime.now(): bg = "#f8d7da"
@@ -108,40 +102,43 @@ def pintar_tarjeta(fila, idx_excel, key_suffix):
             n = max(0, stock - 1)
             ws_inv.update_cell(idx_excel, headers.index("Stock")+1, n)
             registrar_log("RETIRAR", nombre, n)
+            if n == 0:
+                st.success(f"Has agotado el stock de {nombre}. Se ha retirado de la lista.")
             st.rerun()
 
-        if c3.button("➕", key=f"a_{idx_excel}_{key_suffix}"):
-            ws_inv.update_cell(idx_excel, headers.index("Stock")+1, stock + 1)
-            registrar_log("MAS", nombre, stock + 1)
-            st.rerun()
-            
-        if c4.button("➖", key=f"m_{idx_excel}_{key_suffix}"):
-            n = max(0, stock - 1)
-            ws_inv.update_cell(idx_excel, headers.index("Stock")+1, n)
-            registrar_log("MENOS", nombre, n)
-            st.rerun()
-
-        if es_admin and c5.button("🗑", key=f"d_{idx_excel}_{key_suffix}"):
-            ws_inv.delete_rows(idx_excel)
-            registrar_log("BORRAR", nombre, "X")
-            st.rerun()
+        if es_admin:
+            if c3.button("➕", key=f"a_{idx_excel}_{key_suffix}"):
+                ws_inv.update_cell(idx_excel, headers.index("Stock")+1, stock + 1)
+                registrar_log("MAS_ADMIN", nombre, stock + 1)
+                st.rerun()
+            if c4.button("➖", key=f"m_{idx_excel}_{key_suffix}"):
+                n = max(0, stock - 1)
+                ws_inv.update_cell(idx_excel, headers.index("Stock")+1, n)
+                registrar_log("MENOS_ADMIN", nombre, n)
+                st.rerun()
+            if c5.button("🗑", key=f"d_{idx_excel}_{key_suffix}"):
+                ws_inv.delete_rows(idx_excel)
+                registrar_log("BORRAR", nombre, "X")
+                st.rerun()
 
 # --- 6. INTERFAZ ---
-st.title("💊 Inventario")
+st.title("💊 Inventario (Solo Disponible)")
 
-# Buscador
-busqueda = st.selectbox("Buscar:", [""] + sorted(df["Nombre"].unique().tolist()))
+# Buscador (solo muestra lo disponible)
+busqueda = st.selectbox("🔍 Buscar medicamento disponible:", [""] + sorted(df["Nombre"].unique().tolist()))
 if busqueda:
+    # i+2 porque pandas empieza en 0 y Excel en 1, más la fila de cabecera
     for i, f in df[df["Nombre"] == busqueda].iterrows():
-        pintar_tarjeta(f, i+2, "b")
+        # Buscamos el índice real en el dataframe completo para actualizar la celda correcta
+        idx_real = i + 2 
+        pintar_tarjeta(f, idx_real, "b")
     st.divider()
 
-# Pestañas
 p_nombres = ["⚠ Alertas", "📋 Todo", "📁 Vitrina", "📁 Armario"]
 if st.session_state.get("role") == "admin": p_nombres.append("📜 Registro")
 t = st.tabs(p_nombres)
 
-with t[1]: # Todo
+with t[1]: # Todo (Disponible)
     for i, f in df.iterrows(): pintar_tarjeta(f, i+2, "t")
 
 with t[2]: # Vitrina
@@ -152,22 +149,26 @@ with t[3]: # Armario
 
 if st.session_state.get("role") == "admin":
     with t[-1]:
+        st.subheader("🕵 Historial Completo")
         logs = ws_log.get_all_records()
         if logs: st.table(pd.DataFrame(logs).iloc[::-1])
 
 with st.sidebar:
-    st.write(f"Usuario: {st.session_state.user}")
-    if st.button("Salir"):
+    st.write(f"Usuario: *{st.session_state.user}*")
+    if st.button("🚪 Salir"):
         for key in list(st.session_state.keys()): del st.session_state[key]
         st.rerun()
     
     if st.session_state.get("role") == "admin":
         st.divider()
-        with st.form("nuevo"):
+        st.subheader("➕ Nuevo Medicamento")
+        with st.form("nuevo", clear_on_submit=True):
             n = st.text_input("Nombre")
-            s = st.number_input("Stock", 0)
+            s = st.number_input("Stock Inicial", min_value=1)
             c = st.date_input("Caducidad")
-            u = st.selectbox("Ubi", ["Medicación de vitrina", "Medicación de armario"])
+            u = st.selectbox("Ubicación", ["Medicación de vitrina", "Medicación de armario"])
             if st.form_submit_button("Añadir"):
-                ws_inv.append_row([n.capitalize(), int(s), str(c), u])
-                st.rerun()
+                if n:
+                    ws_inv.append_row([n.capitalize(), int(s), str(c), u])
+                    registrar_log("ALTA", n.capitalize(), s)
+                    st.rerun()
