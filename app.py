@@ -7,9 +7,14 @@ import unicodedata
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 from st_keyup import st_keyup
+from streamlit_autorefresh import st_autorefresh
 
 # --- 1. CONFIGURACIÓN E INTERFAZ ---
 st.set_page_config(page_title="Gestión Médica Pro", layout="wide", page_icon="💊")
+
+# --- AUTO-REFRESCO CADA 30 SEGUNDOS ---
+# Esto mantiene la aplicación actualizada con los cambios de otros usuarios
+st_autorefresh(interval=30000, key="datarefresh")
 
 # --- CONTROL DE INACTIVIDAD (3 MINUTOS) ---
 if "last_activity" not in st.session_state:
@@ -189,18 +194,15 @@ def dibujar_tarjeta(fila, key_tab):
             
             st.markdown(f'<div class="caja-info"><b>Principio Activo:</b> {p_act}<br><br><b>Descripción:</b> {d_uso}</div>', unsafe_allow_html=True)
             
-            # NUEVO: Edición de descripción solo para ADMIN
             if st.session_state.role == "admin":
                 with st.form(f"edit_info_{nombre}_{key_tab}"):
                     nuevo_p = st.text_input("Editar Principio Activo", p_act)
                     nueva_d = st.text_area("Editar Descripción Coloquial", d_uso)
-                    if st.form_submit_button("Guardar cambios en descripción"):
+                    if st.form_submit_button("Guardar cambios"):
                         celda = ws_not.find(nombre)
-                        if celda:
-                            ws_not.update_row(celda.row, [nombre, nuevo_p, nueva_d])
-                        else:
-                            ws_not.append_row([nombre, nuevo_p, nueva_d])
-                        st.success("Información actualizada.")
+                        if celda: ws_not.update_row(celda.row, [nombre, nuevo_p, nueva_d])
+                        else: ws_not.append_row([nombre, nuevo_p, nueva_d])
+                        st.success("Guardado.")
                         time.sleep(1)
                         st.rerun()
 
@@ -212,7 +214,7 @@ def dibujar_tarjeta(fila, key_tab):
                 ws_inv.update_cell(celda.row, 2, max(0, stock - 1))
                 ws_his.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "RETIRADA", nombre])
                 st.toast(f"✅ {st.session_state.user} retiró {nombre}")
-                time.sleep(1)
+                time.sleep(0.5)
                 st.rerun()
 
         if st.session_state.role == "admin" and c2.button("🗑", key=f"del_{nombre}_{key_tab}"):
