@@ -3,3 +3,4 @@ streamlit
 pandas
 gspread
 google-auth
+streamlit-keyup
