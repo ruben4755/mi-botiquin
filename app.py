@@ -5,7 +5,6 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 import calendar
 import time
-# Importamos el componente de búsqueda instantánea
 from st_keyup import st_keyup
 
 # --- 1. CONFIGURACIÓN ---
@@ -71,6 +70,8 @@ headers = [h.strip() for h in data[0]]
 df_master = pd.DataFrame(data[1:], columns=headers)
 df_master["Stock"] = pd.to_numeric(df_master["Stock"], errors='coerce').fillna(0).astype(int)
 df_master["idx_excel"] = range(2, len(df_master) + 2)
+# Limpiamos nombres para evitar fallos de búsqueda por espacios invisibles
+df_master["Nombre_Clean"] = df_master["Nombre"].str.upper().str.strip()
 df_visible = df_master[df_master["Stock"] > 0].copy()
 
 # --- 5. FUNCIÓN TARJETAS ---
@@ -114,21 +115,24 @@ def pintar_tarjeta(fila, k):
             ws_inv.delete_rows(idx)
             st.rerun()
 
-# --- 6. INTERFAZ PRINCIPAL CON BUSCADOR KEY-UP ---
+# --- 6. INTERFAZ PRINCIPAL CON BUSCADOR FLEXIBLE ---
 st.title("💊 Inventario Médico")
 
-# BUSCADOR MÁGICO: Abre teclado Y busca sin Enter
-busqueda = st_keyup("🔍 BUSCAR MEDICAMENTO:", key="buscador_inst").upper()
+# El buscador ahora limpia lo que escribes para que coincida siempre
+busqueda_input = st_keyup("🔍 BUSCAR MEDICAMENTO:", key="buscador_inst")
+busqueda = busqueda_input.upper().strip() if busqueda_input else ""
 
 if busqueda:
-    resultados = df_visible[df_visible["Nombre"].str.contains(busqueda, na=False)]
+    # Filtro que busca si el texto está contenido, ignorando espacios al inicio/final
+    resultados = df_visible[df_visible["Nombre_Clean"].str.contains(busqueda, na=False)]
+    
     if not resultados.empty:
         st.subheader(f"Resultados para '{busqueda}':")
         for _, fila in resultados.iterrows():
             pintar_tarjeta(fila, "busq")
         st.divider()
     else:
-        st.warning("No se encontraron coincidencias.")
+        st.warning(f"No se han encontrado coincidencias para '{busqueda}'.")
 
 # Tabs
 t = st.tabs(["📋 Todo", "⚠ Alertas", "📁 Vitrina", "📁 Armario"])
@@ -167,8 +171,8 @@ with st.sidebar:
                 if nombre_n:
                     ultimo_dia = calendar.monthrange(anio_n, mes_n)[1]
                     fecha_interna = f"{anio_n}-{mes_n:02d}-{ultimo_dia:02d}"
-                    ws_inv.append_row([nombre_n, int(stock_n), fecha_interna, ubi_n])
-                    ws_log.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "ALTA", nombre_n, str(stock_n)])
+                    ws_inv.append_row([nombre_n.strip(), int(stock_n), fecha_interna, ubi_n])
+                    ws_log.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "ALTA", nombre_n.strip(), str(stock_n)])
                     st.success("Guardado")
                     time.sleep(1)
                     st.rerun()
