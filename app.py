@@ -5,6 +5,8 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 import calendar
 import time
+# Importamos el componente de búsqueda instantánea
+from st_keyup import st_keyup
 
 # --- 1. CONFIGURACIÓN ---
 st.set_page_config(page_title="Gestión Médica Pro", layout="wide", page_icon="💊")
@@ -19,10 +21,7 @@ st.markdown("""
         margin-bottom: 10px; 
         box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
     }
-    /* Estilo para que el input de búsqueda sea más visible */
-    .stTextInput input {
-        font-size: 18px !important;
-    }
+    .stTextInput input { font-size: 18px !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -115,14 +114,13 @@ def pintar_tarjeta(fila, k):
             ws_inv.delete_rows(idx)
             st.rerun()
 
-# --- 6. INTERFAZ PRINCIPAL CON BUSCADOR MEJORADO ---
+# --- 6. INTERFAZ PRINCIPAL CON BUSCADOR KEY-UP ---
 st.title("💊 Inventario Médico")
 
-# BUSCADOR COMPATIBLE CON MÓVIL (Usa Input de texto para forzar teclado)
-busqueda = st.text_input("🔍 ESCRIBE NOMBRE DEL MEDICAMENTO:", "").upper()
+# BUSCADOR MÁGICO: Abre teclado Y busca sin Enter
+busqueda = st_keyup("🔍 BUSCAR MEDICAMENTO:", key="buscador_inst").upper()
 
 if busqueda:
-    # Filtramos por texto contenido en el nombre
     resultados = df_visible[df_visible["Nombre"].str.contains(busqueda, na=False)]
     if not resultados.empty:
         st.subheader(f"Resultados para '{busqueda}':")
@@ -132,7 +130,7 @@ if busqueda:
     else:
         st.warning("No se encontraron coincidencias.")
 
-# Tabs para navegación por categorías
+# Tabs
 t = st.tabs(["📋 Todo", "⚠ Alertas", "📁 Vitrina", "📁 Armario"])
 with t[0]:
     for _, f in df_visible.iterrows(): pintar_tarjeta(f, "all")
