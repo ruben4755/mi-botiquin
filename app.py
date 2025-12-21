@@ -7,13 +7,20 @@ import unicodedata
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 from st_keyup import st_keyup
-from streamlit_autorefresh import st_autorefresh # Línea 10 Corregida
 
 # --- 1. CONFIGURACIÓN E INTERFAZ ---
 st.set_page_config(page_title="Gestión Médica Pro", layout="wide", page_icon="💊")
 
-# --- AUTO-REFRESCO CADA 30 SEGUNDOS ---
-st_autorefresh(interval=30000, key="datarefresh")
+# --- LÓGICA DE REFRESCO AUTOMÁTICO (CORREGIDA LÍNEA 10) ---
+# Refresca la página cada 30 segundos sin usar librerías externas
+if "fragment_reload" not in st.session_state:
+    st.session_state.fragment_reload = 0
+
+@st.fragment(run_every=30)
+def autorefresh_dataview():
+    st.session_state.fragment_reload += 1
+
+autorefresh_dataview()
 
 # --- CONTROL DE INACTIVIDAD (3 MINUTOS) ---
 if "last_activity" not in st.session_state:
