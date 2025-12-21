@@ -34,7 +34,7 @@ st.markdown("""
 
 # --- 2. MOTOR DE INFORMACIÓN Y TRADUCCIÓN ---
 def traducir_a_coloquial(atc_nombre):
-    atc_nombre = atc_nombre.lower()
+    atc_nombre = (atc_nombre or "").lower()
     mapeo = {
         "analgésicos": "Para aliviar dolores (cabeza, cuerpo, articulaciones).",
         "antipiréticos": "Para ayudar a bajar la fiebre.",
@@ -97,7 +97,7 @@ if not st.session_state["logueado"]:
             else: st.error("Credenciales incorrectas")
     st.stop()
 
-# --- 5. BARRA LATERAL (FILTRADA POR ROL) ---
+# --- 5. BARRA LATERAL (HISTORIAL SOLO ADMIN) ---
 with st.sidebar:
     st.header(f"👤 {st.session_state.user.capitalize()}")
     st.caption(f"Perfil: {st.session_state.role.upper()}")
@@ -122,7 +122,7 @@ with st.sidebar:
         try:
             h_raw = ws_hist.get_all_values()
             if len(h_raw) > 1:
-                df_h = pd.DataFrame([f for f in h_raw[1:] if len(f) >= 3]).iloc[:, :4]
+                df_h = pd.DataFrame([fil for fil in h_raw[1:] if len(fil) >= 3]).iloc[:, :4]
                 df_h.columns = ['Fecha', 'Usuario', 'Acción', 'Medicina']
                 st.dataframe(df_h.iloc[::-1].head(10), hide_index=True, use_container_width=True)
         except: st.caption("Historial no disponible.")
@@ -139,10 +139,14 @@ except:
     st.stop()
 
 st.title("💊 Inventario de Medicación")
-bus = st_keyup("🔍 Buscar por nombre...", key="search_med")
+
+# --- CORRECCIÓN ERROR DE BÚSQUEDA ---
+bus = st_keyup("🔍 Buscar por nombre...", key="search_med_fix")
 
 df_vis = df_master[df_master["Stock"] > 0].copy()
-if bus:
+
+# Validación para evitar error al borrar el buscador
+if bus and bus.strip() != "":
     df_vis = df_vis[df_vis["Nombre"].str.contains(bus.upper(), na=False, case=False)]
 
 tabs = st.tabs(["📋 Todos", "💊 Vitrina", "📦 Armario"])
@@ -151,7 +155,6 @@ tabs = st.tabs(["📋 Todos", "💊 Vitrina", "📦 Armario"])
 def pintar_tarjeta(fila, k):
     n, stock, ubi, idx, cad = fila["Nombre"], fila["Stock"], fila["Ubicacion"], fila["idx"], fila["Caducidad"]
     
-    # Lógica de Semáforo
     try:
         f_c = datetime.strptime(cad, "%Y-%m-%d")
         hoy = datetime.now()
@@ -163,7 +166,6 @@ def pintar_tarjeta(fila, k):
     st.markdown(f'<div class="tarjeta-med" style="border-left: 8px solid {color};"><b>{n}</b> <span style="float:right; font-size:0.7em;">{status}</span><br><small>{stock} uds. | {ubi} | Caducidad: {cad}</small></div>', unsafe_allow_html=True)
     
     with st.expander("🤔 ¿Para qué sirve?"):
-        # Cargar descripción personalizada o remota
         notas_all = ws_notas.get_all_values()
         nota_m = next((r for r in notas_all if r[0] == n), None)
         
@@ -174,7 +176,6 @@ def pintar_tarjeta(fila, k):
         
         st.markdown(f'<div class="caja-info"><b>Principio Activo:</b> {p_f}<br><b>💡 Uso:</b> {d_f}</div>', unsafe_allow_html=True)
         
-        # Solo Admin edita información
         if st.session_state.role == "admin":
             with st.form(f"ed_{idx}"):
                 np, nd = st.text_input("Editar P. Activo", p_f), st.text_area("Editar Uso", d_f)
@@ -184,15 +185,12 @@ def pintar_tarjeta(fila, k):
                     else: ws_notas.append_row([n, np, nd])
                     st.rerun()
 
-    # Botones de Acción
     c1, c2 = st.columns([3, 1])
-    # Todos (User/Admin) pueden retirar unidades
     if c1.button(f"💊 RETIRAR UNIDAD", key=f"r_{idx}_{k}"):
         ws_inv.update_cell(idx, headers.index("Stock") + 1, max(0, int(stock) - 1))
         registrar_evento("RETIRADA", n)
         st.rerun()
         
-    # Solo Admin puede borrar la entrada
     if st.session_state.role == "admin":
         if c2.button("🗑", key=f"d_{idx}_{k}"):
             ws_inv.delete_rows(idx)
