@@ -7,13 +7,12 @@ import unicodedata
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 from st_keyup import st_keyup
-from streamlit_autorefresh import st_autorefresh
+from streamlit_autorefresh import st_autorefresh # Línea 10 Corregida
 
 # --- 1. CONFIGURACIÓN E INTERFAZ ---
 st.set_page_config(page_title="Gestión Médica Pro", layout="wide", page_icon="💊")
 
 # --- AUTO-REFRESCO CADA 30 SEGUNDOS ---
-# Esto mantiene la aplicación actualizada con los cambios de otros usuarios
 st_autorefresh(interval=30000, key="datarefresh")
 
 # --- CONTROL DE INACTIVIDAD (3 MINUTOS) ---
