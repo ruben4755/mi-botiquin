@@ -9,17 +9,18 @@ from datetime import datetime, timedelta
 from st_keyup import st_keyup
 
 # --- 1. CONFIGURACIÓN E INTERFAZ ---
-st.set_page_config(page_title="Gestión Médica Total", layout="wide", page_icon="💊")
+st.set_page_config(page_title="Gestión Médica Pro", layout="wide", page_icon="💊")
 
 # --- CONTROL DE INACTIVIDAD (3 MINUTOS) ---
 if "last_activity" not in st.session_state:
     st.session_state.last_activity = time.time()
 
 if "logueado" in st.session_state and st.session_state.logueado:
+    # 180 segundos = 3 minutos
     if time.time() - st.session_state.last_activity > 180:
         for key in list(st.session_state.keys()):
             del st.session_state[key]
-        st.warning("Sesión cerrada por inactividad (3 min).")
+        st.warning("Sesión cerrada por seguridad (Inactividad).")
         st.stop()
 
 st.markdown("""
@@ -38,7 +39,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. TRADUCCIÓN COLOQUIAL ---
+# --- 2. MOTOR DE TRADUCCIÓN COLOQUIAL ---
 def traducir_a_coloquial(nombre_tecnico):
     nombre_tecnico = (nombre_tecnico or "").lower()
     mapeo = {
@@ -51,7 +52,8 @@ def traducir_a_coloquial(nombre_tecnico):
         "antitusígenos": "Para calmar la tos seca.",
         "ansiolíticos": "Para los nervios o ayudarte a dormir.",
         "antihipertensivos": "Para la tensión alta.",
-        "antidiabéticos": "Para el azúcar en sangre."
+        "antidiabéticos": "Para el azúcar en sangre.",
+        "hipolipemiantes": "Para bajar el colesterol."
     }
     for clave, explicacion in mapeo.items():
         if clave in nombre_tecnico: return explicacion
@@ -95,10 +97,7 @@ if not st.session_state.logueado:
         u, p = st.text_input("Usuario"), st.text_input("Contraseña", type="password")
         if st.form_submit_button("Entrar"):
             if u in st.secrets["users"] and str(p) == str(st.secrets["users"][u]):
-                st.session_state.logueado = True
-                st.session_state.user = u
-                st.session_state.role = st.secrets["roles"].get(u, "user")
-                st.session_state.last_activity = time.time()
+                st.session_state.update({"logueado": True, "user": u, "role": st.secrets["roles"].get(u, "user"), "last_activity": time.time()})
                 st.rerun()
     st.stop()
 
@@ -115,7 +114,7 @@ def cargar_inventario():
 
 df_master = cargar_inventario()
 
-# --- 6. SIDEBAR (CON GESTIÓN DE ADMIN) ---
+# --- 6. SIDEBAR (Solo Admin puede añadir) ---
 with st.sidebar:
     st.header(f"👤 {st.session_state.user.capitalize()}")
     if st.button("🚪 Salir"): 
@@ -125,27 +124,29 @@ with st.sidebar:
     if st.session_state.role == "admin":
         st.divider()
         st.subheader("➕ Añadir Medicación")
-        with st.form("alta_med", clear_on_submit=True):
+        with st.form("alta", clear_on_submit=True):
             n = st.text_input("Nombre").upper()
-            s = st.number_input("Cantidad inicial", 1)
-            f = st.date_input("Fecha Vencimiento")
+            s = st.number_input("Cantidad", 1)
+            f = st.date_input("Vencimiento")
             u = st.selectbox("Lugar", ["Medicación de vitrina", "Medicación de armario"])
-            if st.form_submit_button("Registrar en Inventario"):
+            if st.form_submit_button("Registrar"):
                 if n:
                     ws_inv.append_row([n, s, str(f), u])
                     ws_his.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "ALTA", n])
-                    st.success(f"{n} registrado.")
+                    st.success(f"{n} añadido correctamente.")
+                    st.session_state.last_activity = time.time()
                     time.sleep(1)
                     st.rerun()
 
-# --- 7. MOTOR DE BÚSQUEDA ---
+# --- 7. BÚSQUEDA ULTRA INTELIGENTE ---
 def normalize(t):
     return ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn').lower()
 
 st.title("💊 Inventario Médico")
-raw_query = st_keyup("🔍 Busca por nombre o por lugar (vitrina/armario)...", key="search_pro").strip()
+raw_query = st_keyup("🔍 Busca por nombre o lugar (vitrina/armario)...", key="search_main").strip()
 
-if raw_query: st.session_state.last_activity = time.time()
+if raw_query:
+    st.session_state.last_activity = time.time()
 
 df_vis = df_master[df_master["Stock"] > 0].copy() if not df_master.empty else pd.DataFrame()
 
@@ -161,6 +162,7 @@ def dibujar_tarjeta(fila, key_tab):
         nombre = fila["Nombre"]
         stock = int(fila["Stock"])
         cad = fila["Caducidad"]
+        
         f_vence = datetime.strptime(cad, "%Y-%m-%d")
         col = "#28a745" if f_vence > datetime.now() + timedelta(days=30) else "#ffa500" if f_vence > datetime.now() else "#ff4b4b"
 
@@ -169,12 +171,19 @@ def dibujar_tarjeta(fila, key_tab):
         with st.expander("🤔 ¿Para qué sirve?"):
             notas_data = ws_not.get_all_values()
             nota_m = next((r for r in notas_data if r[0] == nombre), None)
+            
             if nota_m: p_act, d_uso = nota_m[1], nota_m[2]
             else:
                 info = buscar_info_web(nombre)
                 p_act, d_uso = (info['p'], info['e']) if info else ("No disponible", "Sin datos.")
             
-            st.markdown(f'<div class="caja-info"><b>Principio Activo:</b> {p_act}<br><br><b>Descripción:</b> {d_uso}</div>', unsafe_allow_html=True)
+            # Principio Activo primero, Descripción después
+            st.markdown(f'''
+                <div class="caja-info">
+                    <b>Principio Activo:</b> {p_act}<br><br>
+                    <b>Descripción:</b> {d_uso}
+                </div>
+            ''', unsafe_allow_html=True)
 
         c1, c2 = st.columns([4, 1])
         if c1.button(f"💊 RETIRAR 1 UNIDAD", key=f"ret_{nombre}_{key_tab}"):
@@ -182,8 +191,9 @@ def dibujar_tarjeta(fila, key_tab):
             celda = ws_inv.find(nombre)
             if celda:
                 ws_inv.update_cell(celda.row, 2, max(0, stock - 1))
+                # Registro en Historial
                 ws_his.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "RETIRADA", nombre])
-                st.toast(f"✅ Retirado por {st.session_state.user}")
+                st.toast(f"✅ {nombre} retirado por {st.session_state.user}")
                 time.sleep(1)
                 st.rerun()
 
@@ -197,7 +207,7 @@ def dibujar_tarjeta(fila, key_tab):
 # --- 9. RENDER ---
 for i, filtro in enumerate(["", "vitrina", "armario"]):
     with tabs[i]:
-        if df_vis.empty: st.caption("No hay stock.")
+        if df_vis.empty: st.caption("No hay resultados.")
         else:
             df_f = df_vis if not filtro else df_vis[df_vis["Ubicacion"].str.contains(filtro, case=False)]
             for _, fila in df_f.iterrows(): dibujar_tarjeta(fila, i)
