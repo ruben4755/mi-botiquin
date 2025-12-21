@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from st_keyup import st_keyup
 
 # --- 1. CONFIGURACIÓN E INTERFAZ ---
-st.set_page_config(page_title="Sistema Médico Consolidado", layout="wide", page_icon="💊")
+st.set_page_config(page_title="Gestión Médica Pro", layout="wide", page_icon="💊")
 
 st.markdown("""
     <style>
@@ -23,43 +23,55 @@ st.markdown("""
     }
     [data-testid="stSidebar"] { background-color: #1a1c23 !important; min-width: 350px !important; }
     [data-testid="stSidebar"] * { color: white !important; }
-    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
-    .stTabs [data-baseweb="tab"] { 
-        background-color: #1e2128; border-radius: 5px; padding: 10px 20px; color: white;
-    }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. MOTOR DE INFORMACIÓN (API CIMA) ---
-def traducir_a_coloquial(atc_nombre):
-    atc_nombre = (atc_nombre or "").lower()
+# --- 2. MOTOR DE TRADUCCIÓN A LENGUAJE COLOQUIAL ---
+def traducir_a_coloquial(nombre_tecnico):
+    nombre_tecnico = (nombre_tecnico or "").lower()
+    
+    # Diccionario de traducción de "médico" a "humano"
     mapeo = {
-        "analgésicos": "Para dolores (cabeza, cuerpo, articulaciones).",
+        "analgésicos": "Para quitar dolores (cabeza, cuerpo, espalda).",
         "antipiréticos": "Para bajar la fiebre.",
-        "antiinflamatorios": "Para reducir hinchazón y dolor.",
-        "protones": "Protector de estómago. Evita ardores.",
-        "antibacterianos": "Antibiótico para infecciones.",
-        "antihistamínicos": "Para alergias y picores.",
+        "antiinflamatorios": "Para bajar la hinchazón y el dolor.",
+        "protones": "Protector de estómago. Para que no te siente mal la comida o los medicamentos.",
+        "antibacterianos": "Antibiótico. Para matar infecciones de bacterias.",
+        "antihistamínicos": "Para las alergias, los estornudos y los picores.",
         "antitusígenos": "Para calmar la tos seca.",
-        "ansiolíticos": "Para calmar nervios o dormir.",
-        "antihipertensivos": "Para la tensión arterial.",
-        "antidiabéticos": "Para el azúcar en sangre."
+        "ansiolíticos": "Para los nervios, el estrés o ayudarte a dormir.",
+        "antihipertensivos": "Para controlar la tensión alta.",
+        "antidiabéticos": "Para controlar el azúcar en la sangre.",
+        "antifúngicos": "Para los hongos.",
+        "broncodilatadores": "Para abrir los pulmones y respirar mejor.",
+        "hipolipemiantes": "Para bajar el colesterol.",
+        "anticoagulantes": "Para que la sangre esté más líquida y no haga trombos."
     }
+    
     for clave, explicacion in mapeo.items():
-        if clave in atc_nombre: return explicacion
-    return f"Uso: {atc_nombre}."
+        if clave in nombre_tecnico:
+            return explicacion
+    return f"Uso: {nombre_tecnico.capitalize()}."
 
 @st.cache_data(ttl=604800)
 def buscar_info_web(nombre):
     try:
+        # Buscamos solo por la primera palabra del nombre
         n_bus = nombre.split()[0].strip()
         res = requests.get(f"https://cima.aemps.es/cima/rest/medicamentos?nombre={n_bus}", timeout=5).json()
         if res.get('resultados'):
             m = res['resultados'][0]
             p_activo = m.get('principiosActivos', [{'nombre': 'Desconocido'}])[0]['nombre'].capitalize()
+            
+            # Consultamos el detalle para sacar el grupo ATC (para qué sirve)
             det = requests.get(f"https://cima.aemps.es/cima/rest/medicamento?nregistro={m['nregistro']}").json()
             uso_tecnico = det.get('atcs', [{'nombre': 'Uso general'}])[0]['nombre']
-            return {"p": p_activo, "e": traducir_a_coloquial(uso_tecnico)}
+            
+            # Devolvemos el principio activo y la traducción coloquial
+            return {
+                "p": p_activo, 
+                "e": traducir_a_coloquial(uso_tecnico)
+            }
     except: return None
     return None
 
@@ -96,7 +108,7 @@ if not st.session_state["logueado"]:
             else: st.error("Error de acceso.")
     st.stop()
 
-# --- 5. CARGA DE DATOS ROBUSTA ---
+# --- 5. CARGA DE DATOS (PROTEGIDA CONTRA ERRORES) ---
 def cargar_inventario():
     try:
         data = ws_inv.get_all_values()
@@ -110,120 +122,103 @@ def cargar_inventario():
 
 df_master = cargar_inventario()
 
-# --- 6. SIDEBAR ADMINISTRATIVA ---
+# --- 6. SIDEBAR ---
 with st.sidebar:
     st.header(f"👤 {st.session_state.user.capitalize()}")
     if st.button("🚪 Salir"): st.session_state.clear(); st.rerun()
     
     if st.session_state.role == "admin":
         st.divider()
-        st.subheader("➕ Nuevo Medicamento")
+        st.subheader("➕ Añadir Medicamento")
         with st.form("alta", clear_on_submit=True):
             n = st.text_input("Nombre").upper()
-            s = st.number_input("Stock Inicial", 1)
-            f = st.date_input("Vencimiento")
-            u = st.selectbox("Ubicación", ["Medicación de vitrina", "Medicación de armario"])
-            if st.form_submit_button("Registrar"):
+            s = st.number_input("Cantidad", 1)
+            f = st.date_input("Fecha Vencimiento")
+            u = st.selectbox("Lugar", ["Medicación de vitrina", "Medicación de armario"])
+            if st.form_submit_button("Añadir al Stock"):
                 if n:
                     ws_inv.append_row([n, s, str(f), u])
                     registrar("ALTA", n)
                     st.rerun()
 
-        st.divider()
-        st.subheader("🕒 Logs Recientes")
-        try:
-            h_raw = ws_his.get_all_values()
-            if len(h_raw) > 1:
-                df_h = pd.DataFrame(h_raw[1:]).iloc[::-1].head(10)
-                df_h.columns = ["Fecha", "User", "Accion", "Med"]
-                st.dataframe(df_h, hide_index=True)
-        except: pass
-
 # --- 7. PANEL PRINCIPAL Y BUSCADOR ---
-st.title("💊 Gestión de Medicación Consolidada")
-query = st_keyup("🔍 Escribe para buscar...", key="search_main").strip().upper()
+st.title("💊 Inventario Médico Inteligente")
+query = st_keyup("🔍 Busca un medicamento...", key="search_main").strip().upper()
 
 df_vis = df_master[df_master["Stock"] > 0].copy() if not df_master.empty else pd.DataFrame()
 
 if query and not df_vis.empty:
     df_vis = df_vis[df_vis["Nombre"].str.contains(query, na=False)]
 
-tabs = st.tabs(["📋 Todos", "💊 Vitrina", "📦 Armario"])
+tabs = st.tabs(["📋 Todo el Stock", "💊 Vitrina", "📦 Armario"])
 
-# --- 8. FUNCIÓN DE RENDERIZADO PROTEGIDO ---
-def dibujar_medicamento(fila, key_tab):
+# --- 8. FUNCIÓN DE RENDERIZADO (BUSQUEDA DINÁMICA) ---
+def dibujar_tarjeta(fila, key_tab):
     try:
         nombre = fila["Nombre"]
         stock = int(fila["Stock"])
         ubi = fila["Ubicacion"]
         cad = fila["Caducidad"]
         
-        # Lógica de Semáforo
+        # Color según caducidad
         f_vence = datetime.strptime(cad, "%Y-%m-%d")
-        hoy = datetime.now()
-        if f_vence < hoy: status, col = "🔴 CADUCADO", "#ff4b4b"
-        elif f_vence < hoy + timedelta(days=30): status, col = "🟠 PRÓXIMO", "#ffa500"
-        else: status, col = "🟢 OK", "#28a745"
+        col = "#28a745" if f_vence > datetime.now() + timedelta(days=30) else "#ffa500" if f_vence > datetime.now() else "#ff4b4b"
 
         st.markdown(f'''
             <div class="tarjeta-med" style="border-left-color: {col}">
-                <span style="float:right; font-size:0.8em; color:{col}; font-weight:bold;">{status}</span>
-                <b style="font-size:1.2em;">{nombre}</b><br>
-                <small>{stock} unidades | {ubi} | Vence: {cad}</small>
+                <b style="font-size:1.1em;">{nombre}</b><br>
+                <small>{stock} uds | {ubi} | Vence: {cad}</small>
             </div>
         ''', unsafe_allow_html=True)
         
-        with st.expander("📚 Información y Notas"):
-            # Buscar nota guardada
-            notas_all = ws_not.get_all_values()
-            nota_actual = next((r for r in notas_all if r[0] == nombre), None)
+        with st.expander("📚 ¿Para qué sirve?"):
+            # Primero miramos si hay una nota manual guardada
+            notas_data = ws_not.get_all_values()
+            nota_m = next((r for r in notas_data if r[0] == nombre), None)
             
-            if nota_actual:
-                p_act, d_uso = nota_actual[1], nota_actual[2]
+            if nota_m:
+                p_act, d_uso = nota_m[1], nota_m[2]
             else:
+                # Si no hay nota, usamos el motor automático con lenguaje coloquial
                 info = buscar_info_web(nombre)
-                p_act, d_uso = (info['p'], info['e']) if info else ("No disponible", "Sin datos técnicos.")
+                p_act, d_uso = (info['p'], info['e']) if info else ("No encontrado", "Sin información disponible.")
             
-            st.markdown(f'<div class="caja-info"><b>Principio Activo:</b> {p_act}<br><b>💡 Uso:</b> {d_uso}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="caja-info"><b>Componente:</b> {p_act}<br><b>💡 En cristiano:</b> {d_uso}</div>', unsafe_allow_html=True)
             
             if st.session_state.role == "admin":
                 with st.form(f"f_nota_{nombre}_{key_tab}"):
-                    edit_p = st.text_input("Editar Principio", p_act)
-                    edit_d = st.text_area("Editar descripción", d_uso)
-                    if st.form_submit_button("Guardar Nota"):
-                        match = ws_not.find(nombre)
-                        if match: ws_not.update_row(match.row, [nombre, edit_p, edit_d])
-                        else: ws_not.append_row([nombre, edit_p, edit_d])
+                    n_p = st.text_input("Principio Activo", p_act)
+                    n_d = st.text_area("Explicación sencilla", d_uso)
+                    if st.form_submit_button("Guardar mi propia explicación"):
+                        m = ws_not.find(nombre)
+                        if m: ws_not.update_row(m.row, [nombre, n_p, n_d])
+                        else: ws_not.append_row([nombre, n_p, n_d])
                         st.rerun()
 
         c1, c2 = st.columns([4, 1])
-        if c1.button(f"💊 RETIRAR 1 UNIDAD", key=f"btn_ret_{nombre}_{key_tab}"):
-            # BUSQUEDA DINÁMICA: Evita el error de índice
-            match = ws_inv.find(nombre)
-            if match:
-                nuevo_stock = max(0, stock - 1)
-                ws_inv.update_cell(match.row, 2, nuevo_stock)
+        if c1.button(f"➖ RETIRAR 1 UNIDAD", key=f"ret_{nombre}_{key_tab}"):
+            # BUSQUEDA POR NOMBRE (Evita error de base de datos)
+            encontrado = ws_inv.find(nombre)
+            if encontrado:
+                ws_inv.update_cell(encontrado.row, 2, max(0, stock - 1))
                 registrar("RETIRADA", nombre)
                 st.rerun()
 
         if st.session_state.role == "admin":
-            if c2.button("🗑", key=f"btn_del_{nombre}_{key_tab}"):
-                match = ws_inv.find(nombre)
-                if match:
-                    ws_inv.delete_rows(match.row)
-                    registrar("ELIMINADO", nombre)
+            if c2.button("🗑", key=f"del_{nombre}_{key_tab}"):
+                encontrado = ws_inv.find(nombre)
+                if encontrado:
+                    ws_inv.delete_rows(encontrado.row)
+                    registrar("BORRADO", nombre)
                     st.rerun()
-    except Exception as e:
-        pass
+    except: pass
 
-# --- 9. DISTRIBUCIÓN ---
+# --- 9. PESTAÑAS ---
 for i, filtro in enumerate(["", "vitrina", "armario"]):
     with tabs[i]:
         if df_vis.empty:
-            st.info("Inventario vacío.")
+            st.info("No hay medicación registrada.")
         else:
             df_filtro = df_vis if not filtro else df_vis[df_vis["Ubicacion"].str.contains(filtro, case=False)]
-            if df_filtro.empty:
-                st.caption("No se han encontrado resultados.")
             for _, fila in df_filtro.iterrows():
-                dibujar_medicamento(fila, i)
+                dibujar_tarjeta(fila, i)
