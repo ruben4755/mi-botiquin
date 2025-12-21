@@ -6,23 +6,21 @@ import time
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 from st_keyup import st_keyup
-from streamlit_autorefresh import st_autorefresh
 
 # --- 1. CONFIGURACIÓN E INTERFAZ ---
 st.set_page_config(page_title="Gestión Médica Pro", layout="wide", page_icon="💊")
 
-# Script para auto-cierre por inactividad (3 minutos = 180 segundos)
+# --- CONTROL DE INACTIVIDAD (3 MINUTOS) ---
 if "last_activity" not in st.session_state:
     st.session_state.last_activity = time.time()
 
-# Detectar inactividad
-if st.session_state.get("logueado"):
-    tiempo_transcurrido = time.time() - st.session_state.last_activity
-    if tiempo_transcurrido > 180:
-        st.session_state.clear()
-        st.rerun()
-    # Refresco silencioso para chequear el cronómetro
-    st_autorefresh(interval=30000, key="timeoutcheck") 
+if "logueado" in st.session_state and st.session_state.logueado:
+    # Si han pasado más de 180 segundos (3 min) desde la última actividad
+    if time.time() - st.session_state.last_activity > 180:
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.warning("Sesión cerrada por inactividad.")
+        st.stop()
 
 st.markdown("""
     <style>
@@ -53,8 +51,7 @@ def traducir_a_coloquial(nombre_tecnico):
         "antitusígenos": "Para calmar la tos seca.",
         "ansiolíticos": "Para los nervios o ayudarte a dormir.",
         "antihipertensivos": "Para la tensión alta.",
-        "antidiabéticos": "Para el azúcar en la sangre.",
-        "hipolipemiantes": "Para bajar el colesterol."
+        "antidiabéticos": "Para el azúcar en la sangre."
     }
     for clave, explicacion in mapeo.items():
         if clave in nombre_tecnico: return explicacion
@@ -89,15 +86,19 @@ def conectar_gsheets():
 
 ws_inv, ws_not, ws_his = conectar_gsheets()
 
-# --- 4. SEGURIDAD Y ACCESO ---
-if "logueado" not in st.session_state: st.session_state["logueado"] = False
-if not st.session_state["logueado"]:
+# --- 4. LOGIN ---
+if "logueado" not in st.session_state: st.session_state.logueado = False
+
+if not st.session_state.logueado:
     st.title("🔐 Acceso")
     with st.form("login"):
         u, p = st.text_input("Usuario"), st.text_input("Contraseña", type="password")
         if st.form_submit_button("Entrar"):
             if u in st.secrets["users"] and str(p) == str(st.secrets["users"][u]):
-                st.session_state.update({"logueado": True, "user": u, "role": st.secrets["roles"].get(u, "user"), "last_activity": time.time()})
+                st.session_state.logueado = True
+                st.session_state.user = u
+                st.session_state.role = st.secrets["roles"].get(u, "user")
+                st.session_state.last_activity = time.time()
                 st.rerun()
     st.stop()
 
@@ -117,7 +118,9 @@ df_master = cargar_inventario()
 # --- 6. SIDEBAR ---
 with st.sidebar:
     st.header(f"👤 {st.session_state.user.capitalize()}")
-    if st.button("🚪 Salir"): st.session_state.clear(); st.rerun()
+    if st.button("🚪 Salir"): 
+        st.session_state.clear()
+        st.rerun()
     
     if st.session_state.role == "admin":
         with st.form("alta", clear_on_submit=True):
@@ -128,12 +131,16 @@ with st.sidebar:
             if st.form_submit_button("Registrar"):
                 if n:
                     ws_inv.append_row([n, s, str(f), u])
+                    st.session_state.last_activity = time.time()
                     st.rerun()
 
 # --- 7. PANEL PRINCIPAL Y BUSCADOR ---
 st.title("💊 Inventario Médico")
 query = st_keyup("🔍 Busca un medicamento...", key="search_main").strip().upper()
-if query: st.session_state.last_activity = time.time() # Reiniciar timer al buscar
+
+# Reiniciar timer si hay interacción con el buscador
+if query:
+    st.session_state.last_activity = time.time()
 
 df_vis = df_master[df_master["Stock"] > 0].copy() if not df_master.empty else pd.DataFrame()
 if query and not df_vis.empty:
@@ -141,7 +148,7 @@ if query and not df_vis.empty:
 
 tabs = st.tabs(["📋 Todo", "💊 Vitrina", "📦 Armario"])
 
-# --- 8. FUNCIÓN TARJETA (DISEÑO ACTUALIZADO) ---
+# --- 8. FUNCIÓN TARJETA ---
 def dibujar_tarjeta(fila, key_tab):
     try:
         nombre = fila["Nombre"]
@@ -153,6 +160,7 @@ def dibujar_tarjeta(fila, key_tab):
 
         st.markdown(f'<div class="tarjeta-med" style="border-left-color: {col}"><b>{nombre}</b><br><small>{stock} uds | {fila["Ubicacion"]} | Vence: {cad}</small></div>', unsafe_allow_html=True)
         
+        # DISEÑO SOLICITADO: emoji 🤔 y orden de información
         with st.expander("🤔 ¿Para qué sirve?"):
             notas_data = ws_not.get_all_values()
             nota_m = next((r for r in notas_data if r[0] == nombre), None)
@@ -162,14 +170,19 @@ def dibujar_tarjeta(fila, key_tab):
                 info = buscar_info_web(nombre)
                 p_act, d_uso = (info['p'], info['e']) if info else ("No disponible", "Sin datos.")
             
-            # DISEÑO SOLICITADO: Principio activo primero, descripción después
-            st.markdown(f'<div class="caja-info"><b>Principio Activo:</b> {p_act}<br><br><b>Descripción:</b> {d_uso}</div>', unsafe_allow_html=True)
+            st.markdown(f'''
+                <div class="caja-info">
+                    <b>Principio Activo:</b> {p_act}<br><br>
+                    <b>Descripción:</b> {d_uso}
+                </div>
+            ''', unsafe_allow_html=True)
             
             if st.session_state.role == "admin":
                 with st.form(f"f_n_{nombre}_{key_tab}"):
                     n_p = st.text_input("Editar Principio", p_act)
                     n_d = st.text_area("Editar Descripción", d_uso)
                     if st.form_submit_button("Guardar"):
+                        st.session_state.last_activity = time.time()
                         m = ws_not.find(nombre)
                         if m: ws_not.update_row(m.row, [nombre, n_p, n_d])
                         else: ws_not.append_row([nombre, n_p, n_d])
