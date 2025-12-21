@@ -122,27 +122,29 @@ with st.sidebar:
                 st.dataframe(df_h.iloc[::-1].head(10), hide_index=True, use_container_width=True)
         except: st.caption("Sin historial.")
 
-# --- 6. DATOS Y BUSCADOR (CORREGIDO) ---
+# --- 6. DATOS Y BUSCADOR (CORRECCIÓN SEGURIDAD) ---
 try:
     data_inv = ws_inv.get_all_values()
-    headers = [str(h).strip() for h in data_inv[0]]
-    df_master = pd.DataFrame(data_inv[1:], columns=headers)
-    df_master["Stock"] = pd.to_numeric(df_master["Stock"], errors='coerce').fillna(0).astype(int)
-    # Limpiar espacios en blanco de los nombres en el DataFrame
-    df_master["Nombre"] = df_master["Nombre"].astype(str).str.strip()
-    df_master["idx"] = range(2, len(df_master) + 2)
-except:
-    st.error("Error cargando base de datos.")
+    if len(data_inv) > 1:
+        headers = [str(h).strip() for h in data_inv[0]]
+        df_master = pd.DataFrame(data_inv[1:], columns=headers)
+        df_master["Stock"] = pd.to_numeric(df_master["Stock"], errors='coerce').fillna(0).astype(int)
+        df_master["Nombre"] = df_master["Nombre"].astype(str).str.strip()
+        df_master["idx"] = range(2, len(df_master) + 2)
+    else:
+        st.info("El inventario está vacío.")
+        st.stop()
+except Exception as e:
+    st.error("Error conectando con la base de datos.")
     st.stop()
 
 st.title("💊 Inventario Médico")
-bus = st_keyup("🔍 Escribir nombre para buscar...", key="search_final_fix")
+bus = st_keyup("🔍 Buscar medicamento...", key="safe_search_v3")
 
-# Base de visualización
+# Aplicar filtros de forma segura
 df_vis = df_master[df_master["Stock"] > 0].copy()
 
-# FILTRO DE BÚSQUEDA CORREGIDO
-if bus and bus.strip():
+if bus and bus.strip() != "":
     query = bus.strip().upper()
     df_vis = df_vis[df_vis["Nombre"].str.upper().str.contains(query, na=False)]
 
@@ -150,6 +152,9 @@ tabs = st.tabs(["📋 Todos", "💊 Vitrina", "📦 Armario"])
 
 # --- 7. TARJETAS ---
 def pintar_tarjeta(fila, k):
+    # Verificación extra de datos
+    if fila.empty: return
+    
     n, stock, ubi, idx, cad = fila["Nombre"], fila["Stock"], fila["Ubicacion"], fila["idx"], fila["Caducidad"]
     
     try:
@@ -182,6 +187,7 @@ def pintar_tarjeta(fila, k):
 
     c1, c2 = st.columns([3, 1])
     if c1.button(f"💊 RETIRAR", key=f"r_{idx}_{k}"):
+        # Re-obtener posición por si acaso ha cambiado
         ws_inv.update_cell(idx, headers.index("Stock") + 1, max(0, int(stock) - 1))
         registrar_evento("RETIRADA", n)
         st.rerun()
@@ -192,6 +198,7 @@ def pintar_tarjeta(fila, k):
             registrar_evento("ELIMINADO", n)
             st.rerun()
 
+# --- 8. RENDER ---
 for i in range(3):
     with tabs[i]:
         ubi_f = ["", "vitrina", "armario"][i]
@@ -201,4 +208,4 @@ for i in range(3):
             for _, f in df_tab.iterrows():
                 pintar_tarjeta(f, f"tab{i}")
         else:
-            st.caption("No hay coincidencias.")
+            st.caption("No hay medicamentos disponibles.")
