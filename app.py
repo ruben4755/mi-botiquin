@@ -8,11 +8,12 @@ import time
 # --- 1. CONFIGURACIÓN ---
 st.set_page_config(page_title="Gestión Médica Pro", layout="wide", page_icon="💊")
 
-# Optimización para móvil: reducir márgenes y fuentes
+# CSS para rapidez y visibilidad en móvil
 st.markdown("""
     <style>
-    .tarjeta-med { color: black !important; border: 1px solid rgba(0,0,0,0.1); border-radius:8px; padding:8px; margin-bottom:8px; font-size: 14px; }
-    .stTextInput>div>div>input { font-size: 16px !important; } /* Evita zoom automático en iPhone */
+    .stTextInput>div>div>input { font-size: 18px !important; padding: 10px !important; }
+    .tarjeta-med { color: black !important; border-left: 5px solid #28a745; background: #f8f9fa; padding:15px; border-radius:8px; margin-bottom:10px; box-shadow: 2px 2px 5px rgba(0,0,0,0.05); }
+    .stButton>button { width: 100%; border-radius: 5px; height: 3em; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -52,83 +53,93 @@ df_master = pd.DataFrame(data[1:], columns=headers)
 df_master["Stock"] = pd.to_numeric(df_master["Stock"], errors='coerce').fillna(0).astype(int)
 df_master["idx_excel"] = range(2, len(df_master) + 2)
 
+# --- 4. LÓGICA DE REGISTRO ---
 def registrar_log(accion, med, stock):
-    fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
+    fecha = datetime.now().strftime("%H:%M:%S") # Más corto para rapidez
     ws_log.append_row([fecha, st.session_state.user, accion, med, str(stock)])
 
-# --- 4. FUNCIÓN DE TARJETAS ---
+# --- 5. FUNCIÓN TARJETAS (DISEÑO MÓVIL) ---
 def pintar_tarjeta(fila, k):
     nombre, stock, cad, ubi, idx = fila["Nombre"], fila["Stock"], fila["Caducidad"], fila["Ubicacion"], fila["idx_excel"]
-    bg = "#d4edda"
-    try:
-        dt = datetime.strptime(cad, "%Y-%m-%d")
-        if dt < datetime.now(): bg = "#f8d7da"
-        elif dt <= datetime.now() + timedelta(days=60): bg = "#fff3cd"
-    except: pass
-
+    
     with st.container():
-        c1, c2, c3, c4 = st.columns([4, 2, 1, 1]) # Ajustado para móvil
-        c1.markdown(f'<div class="tarjeta-med" style="background:{bg};"><b>{nombre}</b><br>Stock: {stock}</div>', unsafe_allow_html=True)
+        # Diseño en dos filas para móvil: Info arriba, botones abajo
+        st.markdown(f"""
+            <div class="tarjeta-med">
+                <b style="font-size:18px;">{nombre}</b><br>
+                <span>📦 Stock: <b>{stock}</b></span> | 📍 {ubi}<br>
+                <small>📅 Vence: {cad}</small>
+            </div>
+        """, unsafe_allow_html=True)
         
-        if c2.button("💊 Coger", key=f"ret_{idx}_{k}"):
+        c1, c2, c3 = st.columns([2, 1, 1])
+        if c1.button(f"💊 RETIRAR {nombre}", key=f"ret_{idx}_{k}"):
             n = max(0, int(stock) - 1)
             ws_inv.update_cell(idx, headers.index("Stock")+1, n)
             registrar_log("RETIRADO", nombre, n)
             st.rerun()
         
         if st.session_state.role == "admin":
-            if c3.button("➕", key=f"add_{idx}_{k}"):
+            if c2.button("➕", key=f"add_{idx}_{k}"):
                 ws_inv.update_cell(idx, headers.index("Stock")+1, int(stock) + 1)
                 st.rerun()
-            if c4.button("🗑", key=f"del_{idx}_{k}"):
+            if c3.button("🗑", key=f"del_{idx}_{k}"):
                 ws_inv.delete_rows(idx)
-                registrar_log("ELIMINADO", nombre, "0")
                 st.rerun()
 
-# --- 5. BARRA LATERAL ---
-with st.sidebar:
-    st.subheader(f"👤 {st.session_state.user}")
+# --- 6. CUERPO PRINCIPAL (BUSCADOR PRIORITARIO) ---
+st.title("💊 Inventario Rápido")
+
+# BUSCADOR: Ahora fuera del lateral para evitar bloqueos de teclado en móvil
+busqueda = st.text_input("🔍 BUSCAR MEDICAMENTO:", placeholder="Escribe el nombre...", help="Filtra según escribes").upper()
+
+df_visible = df_master[df_master["Stock"] > 0].copy()
+
+if busqueda:
+    # Filtrado ultra-rápido por coincidencia de texto
+    df_filtrado = df_visible[df_visible["Nombre"].str.upper().str.contains(busqueda)]
     
-    # BUSCADOR MÓVIL OPTIMIZADO
-    # Usamos text_input fuera de formulario. 
-    # Para móviles, esto es lo más fiable.
-    busqueda_movil = st.text_input("🔍 Buscar Medicamento", placeholder="Escribe aquí...", key="search_box").lower()
+    if not df_filtrado.empty:
+        for _, f in df_filtrado.iterrows():
+            pintar_tarjeta(f, "search")
+    else:
+        st.error("No se encuentra el medicamento.")
+    st.divider()
 
+# Solo mostramos pestañas si no hay búsqueda activa (para no saturar la pantalla del móvil)
+if not busqueda:
+    tabs = st.tabs(["📋 Todo", "⚠ Alertas", "📁 Vitrina", "📁 Armario"])
+    
+    with tabs[0]:
+        for _, f in df_visible.iterrows(): pintar_tarjeta(f, "all")
+    with tabs[1]:
+        limite = datetime.now() + timedelta(days=45)
+        for _, f in df_visible.iterrows():
+            try:
+                dt_cad = datetime.strptime(f["Caducidad"], "%Y-%m-%d")
+                if dt_cad <= limite: pintar_tarjeta(f, "warn")
+            except: pass
+    with tabs[2]:
+        for _, f in df_visible[df_visible["Ubicacion"] == "Medicación de vitrina"].iterrows(): pintar_tarjeta(f, "vit")
+    with tabs[3]:
+        for _, f in df_visible[df_visible["Ubicacion"] == "Medicación de armario"].iterrows(): pintar_tarjeta(f, "arm")
+
+# --- 7. SIDEBAR (Solo para gestión Admin) ---
+with st.sidebar:
+    st.write(f"Conectado como: *{st.session_state.user}*")
     if st.button("🚪 Cerrar Sesión"):
-        for key in list(st.session_state.keys()): del st.session_state[key]
+        st.session_state.clear()
         st.rerun()
-
+    
     if st.session_state.role == "admin":
         st.divider()
-        with st.expander("➕ Añadir Nuevo"):
-            with st.form("nuevo", clear_on_submit=True):
+        st.subheader("⚙ Gestión Admin")
+        with st.expander("➕ Añadir Medicamento"):
+            with st.form("nuevo"):
                 n = st.text_input("Nombre")
-                s = st.number_input("Stock", min_value=1)
+                s = st.number_input("Stock", 1)
                 c = st.date_input("Caducidad")
                 u = st.selectbox("Ubi", ["Medicación de vitrina", "Medicación de armario"])
                 if st.form_submit_button("Guardar"):
                     ws_inv.append_row([n.upper(), int(s), str(c), u])
-                    registrar_log("ALTA", n.upper(), s)
                     st.rerun()
-
-# --- 6. CUERPO PRINCIPAL ---
-st.title("💊 Inventario")
-
-df_visible = df_master[df_master["Stock"] > 0].copy()
-
-# LÓGICA DE FILTRADO DINÁMICO
-if busqueda_movil:
-    df_filtrado = df_visible[df_visible["Nombre"].str.lower().str.contains(busqueda_movil)]
-    if not df_filtrado.empty:
-        st.subheader(f"Resultados para '{busqueda_movil}'")
-        for _, f in df_filtrado.iterrows():
-            pintar_tarjeta(f, "search")
-    else:
-        st.warning("No hay coincidencias.")
-    st.divider()
-
-# Pestañas
-tabs = st.tabs(["📋 Todo", "⚠ Alertas", "📁 Vitrina", "📁 Armario"])
-with tabs[0]:
-    for _, f in df_visible.iterrows(): pintar_tarjeta(f, "all")
-# ... (las demás pestañas se mantienen igual)
