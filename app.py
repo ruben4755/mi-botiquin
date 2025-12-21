@@ -8,17 +8,24 @@ import time
 # --- 1. CONFIGURACIÓN ---
 st.set_page_config(page_title="Gestión Médica Pro", layout="wide", page_icon="💊")
 
-# CSS para que las tarjetas se vean bien en móvil
+# CSS: Definimos la estructura base de la tarjeta (el color del borde se cambia dinámicamente)
 st.markdown("""
     <style>
-    .tarjeta-med { color: black !important; border-left: 5px solid #28a745; background: #f8f9fa; padding:12px; border-radius:8px; margin-bottom:10px; }
-    .stSelectbox div[data-baseweb="select"] { font-size: 18px !important; } 
+    .tarjeta-med { 
+        color: black !important; 
+        background: #f8f9fa; 
+        padding: 15px; 
+        border-radius: 8px; 
+        margin-bottom: 10px; 
+        box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
+    }
+    .stSelectbox div[data-baseweb="select"] { font-size: 18px !important; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. LOGIN (BLOQUEADO PARA EVITAR ERRORES) ---
+# --- 2. LOGIN SEGURO ---
 if "user" not in st.session_state:
-    st.title("🔐 Acceso")
+    st.title("🔐 Acceso al Inventario")
     with st.form("login_form"):
         u = st.text_input("Usuario")
         p = st.text_input("Contraseña", type="password")
@@ -29,9 +36,9 @@ if "user" not in st.session_state:
                 st.rerun()
             else:
                 st.error("Usuario o contraseña incorrectos")
-    st.stop() # Detiene la ejecución aquí si no está logueado
+    st.stop()
 
-# --- 3. CONEXIÓN (SOLO SI HAY LOGIN) ---
+# --- 3. CONEXIÓN ---
 @st.cache_resource
 def conectar():
     try:
@@ -62,70 +69,77 @@ df_visible = df_master[df_master["Stock"] > 0].copy()
 
 # --- 4. FUNCIONES ---
 def registrar_log(accion, med, stock):
-    fecha = datetime.now().strftime("%H:%M")
+    fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
     ws_log.append_row([fecha, st.session_state.user, accion, med, str(stock)])
 
 def pintar_tarjeta(fila, k):
     nombre, stock, cad, ubi, idx = fila["Nombre"], fila["Stock"], fila["Caducidad"], fila["Ubicacion"], fila["idx_excel"]
+    
+    # LÓGICA DE COLORES DINÁMICOS
+    color_borde = "#28a745"  # Verde (OK)
+    texto_alerta = ""
+    
+    try:
+        fecha_cad = datetime.strptime(cad, "%Y-%m-%d")
+        hoy = datetime.now()
+        if fecha_cad < hoy:
+            color_borde = "#dc3545"  # Rojo (Caducado)
+            texto_alerta = "⚠ CADUCADO"
+        elif fecha_cad <= hoy + timedelta(days=60):
+            color_borde = "#ffc107"  # Amarillo (Próximo)
+            texto_alerta = "⏳ REVISAR"
+    except:
+        pass
+
     with st.container():
-        st.markdown(f'<div class="tarjeta-med"><b>{nombre}</b> | Stock: {stock}<br><small>{ubi} - Vence: {cad}</small></div>', unsafe_allow_html=True)
+        # Aplicamos el color al borde izquierdo dinámicamente
+        st.markdown(f"""
+            <div class="tarjeta-med" style="border-left: 10px solid {color_borde};">
+                <div style="display: flex; justify-content: space-between;">
+                    <b style="font-size:18px;">{nombre}</b>
+                    <span style="color:{color_borde}; font-weight:bold;">{texto_alerta}</span>
+                </div>
+                <span>📦 Stock: <b>{stock}</b></span> | 📍 <small>{ubi}</small><br>
+                <small>📅 Vence: {cad}</small>
+            </div>
+        """, unsafe_allow_html=True)
+        
         c1, c2, c3 = st.columns([2, 1, 1])
         if c1.button(f"💊 RETIRAR", key=f"btn_{idx}_{k}"):
             n = max(0, int(stock) - 1)
             ws_inv.update_cell(idx, headers.index("Stock")+1, n)
             registrar_log("RETIRADO", nombre, n)
             st.rerun()
+        
         if st.session_state.role == "admin":
             if c2.button("➕", key=f"add_{idx}_{k}"):
                 ws_inv.update_cell(idx, headers.index("Stock")+1, int(stock) + 1)
                 st.rerun()
             if c3.button("🗑", key=f"del_{idx}_{k}"):
                 ws_inv.delete_rows(idx)
+                registrar_log("ELIMINADO", nombre, "0")
                 st.rerun()
 
-# --- 5. INTERFAZ PRINCIPAL ---
-st.title("💊 Inventario Rápido")
+# --- 5. INTERFAZ ---
+st.title("💊 Gestión de Inventario")
 
-# BUSCADOR MÁGICO: El selectbox de Streamlit filtra mientras escribes SIN ENTER.
-# Al seleccionar, la tarjeta aparece debajo al instante.
+# Buscador Inteligente (Sin Enter)
 opciones = sorted(df_visible["Nombre"].unique().tolist())
-seleccion = st.selectbox("🔍 BUSCAR (Escribe el nombre aquí...)", [""] + opciones, index=0)
+seleccion = st.selectbox("🔍 BUSCADOR RÁPIDO:", [""] + opciones, index=0)
 
 if seleccion != "":
     fila_sel = df_visible[df_visible["Nombre"] == seleccion].iloc[0]
-    st.subheader("📍 Resultado:")
-    pintar_tarjeta(fila_sel, "busqueda")
+    st.subheader("Resultado:")
+    pintar_tarjeta(fila_sel, "busq")
     st.divider()
 
-# Pestañas normales
+# Pestañas
 t = st.tabs(["📋 Todo", "⚠ Alertas", "📁 Vitrina", "📁 Armario"])
 with t[0]:
     for _, f in df_visible.iterrows(): pintar_tarjeta(f, "all")
 with t[1]:
-    lim = datetime.now() + timedelta(days=45)
+    # Alertas de caducidad (Próximos 45 días)
+    limite = datetime.now() + timedelta(days=45)
     for _, f in df_visible.iterrows():
         try:
-            if datetime.strptime(f["Caducidad"], "%Y-%m-%d") <= lim: pintar_tarjeta(f, "warn")
-        except: pass
-with t[2]:
-    for _, f in df_visible[df_visible["Ubicacion"] == "Medicación de vitrina"].iterrows(): pintar_tarjeta(f, "v")
-with t[3]:
-    for _, f in df_visible[df_visible["Ubicacion"] == "Medicación de armario"].iterrows(): pintar_tarjeta(f, "a")
-
-# --- 6. SIDEBAR ---
-with st.sidebar:
-    st.write(f"Usuario: {st.session_state.user}")
-    if st.button("Salir"):
-        st.session_state.clear()
-        st.rerun()
-    if st.session_state.role == "admin":
-        st.divider()
-        with st.form("nuevo"):
-            st.write("Añadir Medicamento")
-            n = st.text_input("Nombre")
-            s = st.number_input("Stock", 1)
-            c = st.date_input("Caducidad")
-            u = st.selectbox("Ubi", ["Medicación de vitrina", "Medicación de armario"])
-            if st.form_submit_button("Guardar"):
-                ws_inv.append_row([n.upper(), int(s), str(c), u])
-                st.rerun()
+            if
