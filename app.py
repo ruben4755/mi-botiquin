@@ -131,13 +131,13 @@ with st.sidebar:
     
     if st.session_state.role == "admin":
         st.divider()
-        st.subheader("➕ Añadir Medicación")
+        st.subheader("➕ Añadir Nueva Medicación")
         with st.form("alta", clear_on_submit=True):
             n = st.text_input("Nombre").upper()
-            s = st.number_input("Cantidad", 1)
+            s = st.number_input("Cantidad inicial", 1)
             f = st.date_input("Vencimiento")
             u = st.selectbox("Lugar", ["Medicación de vitrina", "Medicación de armario"])
-            if st.form_submit_button("Registrar"):
+            if st.form_submit_button("Registrar en Inventario"):
                 if n:
                     ws_inv.append_row([n, s, str(f), u])
                     ws_his.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "ALTA", n])
@@ -208,11 +208,11 @@ def dibujar_tarjeta(fila, key_tab):
                         time.sleep(1)
                         st.rerun()
 
-        # BOTONES DE ACCIÓN (Corregido y Añadido +)
-        c1, c2, c3 = st.columns([2, 2, 1])
+        # BOTONES DE ACCIÓN (Restringido + para Admin)
+        btn_cols = st.columns([2, 2, 1])
         
-        # BOTÓN RETIRAR (-)
-        if c1.button(f"💊 QUITAR 1", key=f"ret_{nombre}_{key_tab}"):
+        # Botón Quitar (Visible para todos)
+        if btn_cols[0].button(f"💊 QUITAR 1", key=f"ret_{nombre}_{key_tab}"):
             st.session_state.last_activity = time.time()
             celda = ws_inv.find(nombre)
             if celda:
@@ -223,24 +223,23 @@ def dibujar_tarjeta(fila, key_tab):
                 time.sleep(0.5)
                 st.rerun()
 
-        # BOTÓN AÑADIR (+)
-        if c2.button(f"➕ AÑADIR 1", key=f"add_{nombre}_{key_tab}"):
-            st.session_state.last_activity = time.time()
-            celda = ws_inv.find(nombre)
-            if celda:
-                nueva_cantidad = stock + 1
-                ws_inv.update_cell(celda.row, 2, nueva_cantidad)
-                ws_his.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "AUMENTO (+1)", nombre])
-                st.toast(f"✅ {nombre} añadido.")
-                time.sleep(0.5)
-                st.rerun()
+        # Botones Solo para Admin (+ y Eliminar)
+        if st.session_state.role == "admin":
+            if btn_cols[1].button(f"➕ AÑADIR 1", key=f"add_{nombre}_{key_tab}"):
+                st.session_state.last_activity = time.time()
+                celda = ws_inv.find(nombre)
+                if celda:
+                    ws_inv.update_cell(celda.row, 2, stock + 1)
+                    ws_his.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "AUMENTO (+1)", nombre])
+                    st.toast(f"✅ {nombre} añadido.")
+                    time.sleep(0.5)
+                    st.rerun()
 
-        # BOTÓN ELIMINAR (Solo Admin)
-        if st.session_state.role == "admin" and c3.button("🗑", key=f"del_{nombre}_{key_tab}"):
-            celda = ws_inv.find(nombre)
-            if celda:
-                ws_inv.delete_rows(celda.row)
-                st.rerun()
+            if btn_cols[2].button("🗑", key=f"del_{nombre}_{key_tab}"):
+                celda = ws_inv.find(nombre)
+                if celda:
+                    ws_inv.delete_rows(celda.row)
+                    st.rerun()
     except: pass
 
 # --- 9. RENDER ---
