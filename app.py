@@ -38,7 +38,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. MOTOR DE TRADUCCIÓN COLOQUIAL ---
+# --- 2. TRADUCCIÓN COLOQUIAL ---
 def traducir_a_coloquial(nombre_tecnico):
     nombre_tecnico = (nombre_tecnico or "").lower()
     mapeo = {
@@ -51,8 +51,7 @@ def traducir_a_coloquial(nombre_tecnico):
         "antitusígenos": "Para calmar la tos seca.",
         "ansiolíticos": "Para los nervios o ayudarte a dormir.",
         "antihipertensivos": "Para la tensión alta.",
-        "antidiabéticos": "Para el azúcar en sangre.",
-        "hipolipemiantes": "Para bajar el colesterol."
+        "antidiabéticos": "Para el azúcar en sangre."
     }
     for clave, explicacion in mapeo.items():
         if clave in nombre_tecnico: return explicacion
@@ -123,39 +122,33 @@ with st.sidebar:
         st.session_state.clear()
         st.rerun()
     
+    # REGISTRO DE HISTORIAL (PARA EL ADMIN)
     if st.session_state.role == "admin":
-        with st.form("alta", clear_on_submit=True):
-            n = st.text_input("Nombre").upper()
-            s = st.number_input("Cantidad", 1)
-            f = st.date_input("Vencimiento")
-            u = st.selectbox("Lugar", ["Medicación de vitrina", "Medicación de armario"])
-            if st.form_submit_button("Registrar"):
-                if n:
-                    ws_inv.append_row([n, s, str(f), u])
-                    st.session_state.last_activity = time.time()
-                    st.rerun()
+        st.subheader("📝 Registro de Actividad")
+        try:
+            h_data = ws_his.get_all_values()
+            if len(h_data) > 1:
+                st.dataframe(pd.DataFrame(h_data[1:], columns=h_data[0]).tail(10))
+        except: st.write("Sin registros aún.")
 
-# --- 7. MOTOR DE BÚSQUEDA ULTRA INTELIGENTE ---
+# --- 7. BÚSQUEDA ---
 def normalize(t):
     return ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn').lower()
 
 st.title("💊 Inventario Médico Pro")
 raw_query = st_keyup("🔍 ¿Qué buscas? (Nombre o Ubicación)", key="search_pro").strip()
 
-if raw_query:
-    st.session_state.last_activity = time.time()
+if raw_query: st.session_state.last_activity = time.time()
 
 df_vis = df_master[df_master["Stock"] > 0].copy() if not df_master.empty else pd.DataFrame()
 
 if raw_query and not df_vis.empty:
     q = normalize(raw_query)
-    df_vis = df_vis[
-        df_vis.apply(lambda r: q in normalize(r["Nombre"]) or q in normalize(r["Ubicacion"]), axis=1)
-    ]
+    df_vis = df_vis[df_vis.apply(lambda r: q in normalize(r["Nombre"]) or q in normalize(r["Ubicacion"]), axis=1)]
 
 tabs = st.tabs(["📋 Todo", "💊 Vitrina", "📦 Armario"])
 
-# --- 8. FUNCIÓN TARJETA ---
+# --- 8. TARJETA (CON REGISTRO DE PERSONAS) ---
 def dibujar_tarjeta(fila, key_tab):
     try:
         nombre = fila["Nombre"]
@@ -170,59 +163,38 @@ def dibujar_tarjeta(fila, key_tab):
         with st.expander("🤔 ¿Para qué sirve?"):
             notas_data = ws_not.get_all_values()
             nota_m = next((r for r in notas_data if r[0] == nombre), None)
-            
             if nota_m: p_act, d_uso = nota_m[1], nota_m[2]
             else:
                 info = buscar_info_web(nombre)
                 p_act, d_uso = (info['p'], info['e']) if info else ("No disponible", "Sin datos.")
             
-            st.markdown(f'''
-                <div class="caja-info">
-                    <b>Principio Activo:</b> {p_act}<br><br>
-                    <b>Descripción:</b> {d_uso}
-                </div>
-            ''', unsafe_allow_html=True)
-            
-            if st.session_state.role == "admin":
-                with st.form(f"f_n_{nombre}_{key_tab}"):
-                    n_p = st.text_input("Editar Principio", p_act)
-                    n_d = st.text_area("Editar Descripción", d_uso)
-                    if st.form_submit_button("Guardar"):
-                        st.session_state.last_activity = time.time()
-                        m = ws_not.find(nombre)
-                        if m: ws_not.update_row(m.row, [nombre, n_p, n_d])
-                        else: ws_not.append_row([nombre, n_p, n_d])
-                        st.rerun()
+            st.markdown(f'<div class="caja-info"><b>Principio Activo:</b> {p_act}<br><br><b>Descripción:</b> {d_uso}</div>', unsafe_allow_html=True)
 
         c1, c2 = st.columns([4, 1])
         if c1.button(f"💊 RETIRAR 1 UNIDAD", key=f"ret_{nombre}_{key_tab}"):
             st.session_state.last_activity = time.time()
-            encontrado = ws_inv.find(nombre)
-            if encontrado:
-                ws_inv.update_cell(encontrado.row, 2, max(0, stock - 1))
-                ws_his.append_row([datetime.now().strftime("%d/%m %H:%M"), st.session_state.user, "RETIRADA", nombre])
+            celda = ws_inv.find(nombre)
+            if celda:
+                nuevo_stock = max(0, stock - 1)
+                ws_inv.update_cell(celda.row, 2, nuevo_stock)
+                # REGISTRO: Fecha, Persona, Acción, Medicamento
+                ws_his.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "RETIRADA", nombre])
+                st.toast(f"✅ {st.session_state.user} ha retirado {nombre}")
+                time.sleep(1)
                 st.rerun()
 
-        if st.session_state.role == "admin":
-            if c2.button("🗑", key=f"del_{nombre}_{key_tab}"):
-                st.session_state.last_activity = time.time()
-                encontrado = ws_inv.find(nombre)
-                if encontrado:
-                    ws_inv.delete_rows(encontrado.row)
-                    st.rerun()
-    except:
-        pass
+        if st.session_state.role == "admin" and c2.button("🗑", key=f"del_{nombre}_{key_tab}"):
+            celda = ws_inv.find(nombre)
+            if celda:
+                ws_inv.delete_rows(celda.row)
+                st.rerun()
+    except: pass
 
 # --- 9. RENDER ---
 filtros_ubi = ["", "vitrina", "armario"]
 for i, filtro in enumerate(filtros_ubi):
     with tabs[i]:
-        if df_vis.empty:
-            st.caption("No hay resultados.")
+        if df_vis.empty: st.caption("No hay resultados.")
         else:
             df_f = df_vis if not filtro else df_vis[df_vis["Ubicacion"].str.contains(filtro, case=False)]
-            if df_f.empty:
-                st.caption("Sin resultados.")
-            else:
-                for _, fila in df_f.iterrows():
-                    dibujar_tarjeta(fila, i)
+            for _, fila in df_f.iterrows(): dibujar_tarjeta(fila, i)
