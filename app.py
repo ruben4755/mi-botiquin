@@ -120,7 +120,12 @@ def cargar_inventario():
         return df
     except: return pd.DataFrame()
 
-df_master = cargar_inventario()
+# Inicializar o refrescar dataframe master
+if "df_master" not in st.session_state or time.time() - st.session_state.get('last_load', 0) > 30:
+    st.session_state.df_master = cargar_inventario()
+    st.session_state.last_load = time.time()
+
+df_master = st.session_state.df_master
 
 # --- 6. SIDEBAR (FORMULARIO E HISTORIAL) ---
 with st.sidebar:
@@ -143,6 +148,7 @@ with st.sidebar:
                     ws_his.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "ALTA", n])
                     st.session_state.last_activity = time.time()
                     st.success(f"{n} registrado.")
+                    st.session_state.df_master = cargar_inventario() # Forzar recarga
                     time.sleep(1)
                     st.rerun()
 
@@ -166,7 +172,7 @@ raw_query = st_keyup("🔍 Busca por nombre o lugar...", key="search_main").stri
 if raw_query:
     st.session_state.last_activity = time.time()
 
-df_vis = df_master[df_master["Stock"] > 0].copy() if not df_master.empty else pd.DataFrame()
+df_vis = df_master[df_master["Stock"] >= 0].copy() if not df_master.empty else pd.DataFrame()
 
 if raw_query and not df_vis.empty:
     q = normalize(raw_query)
@@ -200,30 +206,26 @@ def dibujar_tarjeta(fila, key_tab):
                 with st.form(f"edit_info_{nombre}_{key_tab}"):
                     nuevo_p = st.text_input("Editar Principio Activo", p_act)
                     nueva_d = st.text_area("Editar Descripción Coloquial", d_uso)
-                    if st.form_submit_button("Guardar cambios"):
+                    if st.form_submit_button("Guardar"):
                         celda = ws_not.find(nombre)
                         if celda: ws_not.update_row(celda.row, [nombre, nuevo_p, nueva_d])
                         else: ws_not.append_row([nombre, nuevo_p, nueva_d])
-                        st.success("Guardado.")
-                        time.sleep(1)
                         st.rerun()
 
-        # BOTONES DE ACCIÓN (Restringido + para Admin)
         btn_cols = st.columns([2, 2, 1])
         
-        # Botón Quitar (Visible para todos)
+        # Botón Quitar (Actualización inmediata en UI)
         if btn_cols[0].button(f"💊 QUITAR 1", key=f"ret_{nombre}_{key_tab}"):
             st.session_state.last_activity = time.time()
             celda = ws_inv.find(nombre)
             if celda:
-                nueva_cantidad = max(0, stock - 1)
-                ws_inv.update_cell(celda.row, 2, nueva_cantidad)
+                nueva_cant = max(0, stock - 1)
+                ws_inv.update_cell(celda.row, 2, nueva_cant)
                 ws_his.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "RETIRADA (-1)", nombre])
-                st.toast(f"✅ {nombre} retirado.")
-                time.sleep(0.5)
+                st.session_state.df_master = cargar_inventario() # Actualizar estado interno
                 st.rerun()
 
-        # Botones Solo para Admin (+ y Eliminar)
+        # Botón Añadir (Solo Admin + UI inmediata)
         if st.session_state.role == "admin":
             if btn_cols[1].button(f"➕ AÑADIR 1", key=f"add_{nombre}_{key_tab}"):
                 st.session_state.last_activity = time.time()
@@ -231,14 +233,14 @@ def dibujar_tarjeta(fila, key_tab):
                 if celda:
                     ws_inv.update_cell(celda.row, 2, stock + 1)
                     ws_his.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "AUMENTO (+1)", nombre])
-                    st.toast(f"✅ {nombre} añadido.")
-                    time.sleep(0.5)
+                    st.session_state.df_master = cargar_inventario() # Actualizar estado interno
                     st.rerun()
 
             if btn_cols[2].button("🗑", key=f"del_{nombre}_{key_tab}"):
                 celda = ws_inv.find(nombre)
                 if celda:
                     ws_inv.delete_rows(celda.row)
+                    st.session_state.df_master = cargar_inventario()
                     st.rerun()
     except: pass
 
