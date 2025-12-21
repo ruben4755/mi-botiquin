@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from st_keyup import st_keyup
 
 # --- 1. CONFIGURACIÓN E INTERFAZ ---
-st.set_page_config(page_title="Gestión Médica Pro", layout="wide", page_icon="💊")
+st.set_page_config(page_title="Gestión Médica Total", layout="wide", page_icon="💊")
 
 # --- CONTROL DE INACTIVIDAD (3 MINUTOS) ---
 if "last_activity" not in st.session_state:
@@ -115,28 +115,35 @@ def cargar_inventario():
 
 df_master = cargar_inventario()
 
-# --- 6. SIDEBAR ---
+# --- 6. SIDEBAR (CON GESTIÓN DE ADMIN) ---
 with st.sidebar:
     st.header(f"👤 {st.session_state.user.capitalize()}")
     if st.button("🚪 Salir"): 
         st.session_state.clear()
         st.rerun()
     
-    # REGISTRO DE HISTORIAL (PARA EL ADMIN)
     if st.session_state.role == "admin":
-        st.subheader("📝 Registro de Actividad")
-        try:
-            h_data = ws_his.get_all_values()
-            if len(h_data) > 1:
-                st.dataframe(pd.DataFrame(h_data[1:], columns=h_data[0]).tail(10))
-        except: st.write("Sin registros aún.")
+        st.divider()
+        st.subheader("➕ Añadir Medicación")
+        with st.form("alta_med", clear_on_submit=True):
+            n = st.text_input("Nombre").upper()
+            s = st.number_input("Cantidad inicial", 1)
+            f = st.date_input("Fecha Vencimiento")
+            u = st.selectbox("Lugar", ["Medicación de vitrina", "Medicación de armario"])
+            if st.form_submit_button("Registrar en Inventario"):
+                if n:
+                    ws_inv.append_row([n, s, str(f), u])
+                    ws_his.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "ALTA", n])
+                    st.success(f"{n} registrado.")
+                    time.sleep(1)
+                    st.rerun()
 
-# --- 7. BÚSQUEDA ---
+# --- 7. MOTOR DE BÚSQUEDA ---
 def normalize(t):
     return ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn').lower()
 
-st.title("💊 Inventario Médico Pro")
-raw_query = st_keyup("🔍 ¿Qué buscas? (Nombre o Ubicación)", key="search_pro").strip()
+st.title("💊 Inventario Médico")
+raw_query = st_keyup("🔍 Busca por nombre o por lugar (vitrina/armario)...", key="search_pro").strip()
 
 if raw_query: st.session_state.last_activity = time.time()
 
@@ -148,13 +155,12 @@ if raw_query and not df_vis.empty:
 
 tabs = st.tabs(["📋 Todo", "💊 Vitrina", "📦 Armario"])
 
-# --- 8. TARJETA (CON REGISTRO DE PERSONAS) ---
+# --- 8. FUNCIÓN TARJETA ---
 def dibujar_tarjeta(fila, key_tab):
     try:
         nombre = fila["Nombre"]
         stock = int(fila["Stock"])
         cad = fila["Caducidad"]
-        
         f_vence = datetime.strptime(cad, "%Y-%m-%d")
         col = "#28a745" if f_vence > datetime.now() + timedelta(days=30) else "#ffa500" if f_vence > datetime.now() else "#ff4b4b"
 
@@ -175,11 +181,9 @@ def dibujar_tarjeta(fila, key_tab):
             st.session_state.last_activity = time.time()
             celda = ws_inv.find(nombre)
             if celda:
-                nuevo_stock = max(0, stock - 1)
-                ws_inv.update_cell(celda.row, 2, nuevo_stock)
-                # REGISTRO: Fecha, Persona, Acción, Medicamento
+                ws_inv.update_cell(celda.row, 2, max(0, stock - 1))
                 ws_his.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "RETIRADA", nombre])
-                st.toast(f"✅ {st.session_state.user} ha retirado {nombre}")
+                st.toast(f"✅ Retirado por {st.session_state.user}")
                 time.sleep(1)
                 st.rerun()
 
@@ -191,10 +195,9 @@ def dibujar_tarjeta(fila, key_tab):
     except: pass
 
 # --- 9. RENDER ---
-filtros_ubi = ["", "vitrina", "armario"]
-for i, filtro in enumerate(filtros_ubi):
+for i, filtro in enumerate(["", "vitrina", "armario"]):
     with tabs[i]:
-        if df_vis.empty: st.caption("No hay resultados.")
+        if df_vis.empty: st.caption("No hay stock.")
         else:
             df_f = df_vis if not filtro else df_vis[df_vis["Ubicacion"].str.contains(filtro, case=False)]
             for _, fila in df_f.iterrows(): dibujar_tarjeta(fila, i)
