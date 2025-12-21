@@ -51,7 +51,8 @@ def traducir_a_coloquial(nombre_tecnico):
         "antitusígenos": "Para calmar la tos seca.",
         "ansiolíticos": "Para los nervios o ayudarte a dormir.",
         "antihipertensivos": "Para la tensión alta.",
-        "antidiabéticos": "Para el azúcar en sangre."
+        "antidiabéticos": "Para el azúcar en sangre.",
+        "hipolipemiantes": "Para bajar el colesterol."
     }
     for clave, explicacion in mapeo.items():
         if clave in nombre_tecnico: return explicacion
@@ -112,7 +113,7 @@ def cargar_inventario():
 
 df_master = cargar_inventario()
 
-# --- 6. SIDEBAR (Con Historial para Admin) ---
+# --- 6. SIDEBAR (FORMULARIO E HISTORIAL DEBAJO) ---
 with st.sidebar:
     st.header(f"👤 {st.session_state.user.capitalize()}")
     if st.button("🚪 Salir"): 
@@ -120,16 +121,6 @@ with st.sidebar:
         st.rerun()
     
     if st.session_state.role == "admin":
-        st.divider()
-        st.subheader("📝 Última Actividad")
-        try:
-            h_data = ws_his.get_all_values()
-            if len(h_data) > 1:
-                df_h = pd.DataFrame(h_data[1:], columns=h_data[0]).tail(10)
-                st.table(df_h)
-            else: st.write("No hay registros.")
-        except: st.write("Error al cargar historial.")
-
         st.divider()
         st.subheader("➕ Añadir Medicación")
         with st.form("alta", clear_on_submit=True):
@@ -142,7 +133,23 @@ with st.sidebar:
                     ws_inv.append_row([n, s, str(f), u])
                     ws_his.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "ALTA", n])
                     st.session_state.last_activity = time.time()
+                    st.success(f"{n} registrado.")
+                    time.sleep(1)
                     st.rerun()
+
+        # HISTORIAL JUSTO DEBAJO DE AÑADIR (Solo para Admin)
+        st.divider()
+        st.subheader("📜 Historial de Movimientos")
+        try:
+            h_data = ws_his.get_all_values()
+            if len(h_data) > 1:
+                # Cabeceras: Fecha, Usuario, Acción, Medicamento
+                df_h = pd.DataFrame(h_data[1:], columns=h_data[0]).tail(10)
+                st.dataframe(df_h.iloc[::-1], use_container_width=True, hide_index=True)
+            else:
+                st.caption("No hay registros en el historial.")
+        except:
+            st.error("Error al acceder a la pestaña Historial.")
 
 # --- 7. BÚSQUEDA ---
 def normalize(t):
@@ -190,6 +197,7 @@ def dibujar_tarjeta(fila, key_tab):
             celda = ws_inv.find(nombre)
             if celda:
                 ws_inv.update_cell(celda.row, 2, max(0, stock - 1))
+                # Registro con todos los datos solicitados
                 ws_his.append_row([datetime.now().strftime("%d/%m/%Y %H:%M"), st.session_state.user, "RETIRADA", nombre])
                 st.toast(f"✅ {st.session_state.user} retiró {nombre}")
                 time.sleep(1)
