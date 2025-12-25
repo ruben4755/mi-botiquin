@@ -156,7 +156,6 @@ with st.sidebar:
                     st.session_state.db_inventario.append(item_nuevo)
                     guardar_nube(item_nuevo, "inventario")
                     
-                    # --- CORRECCIÓN REGISTRO FIJO AL ALTA ---
                     reg_alta = {"Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"), "Persona": st.session_state.user, "Medicamento": n, "Movimiento": f"ALTA NUEVA ({s} uds)"}
                     st.session_state.db_registro_fijo.append(reg_alta)
                     guardar_nube(reg_alta, "registros")
@@ -182,7 +181,7 @@ if st.session_state.role == "admin": titulos.extend(["👥 Usuarios", "📜 Regi
 tabs = st.tabs(titulos)
 
 # --- 10. FUNCIÓN TARJETA ---
-def dibujar_tarjeta(fila, index_original, key_tab):
+def dibujar_tarjeta(fila, key_tab):
     nombre, stock, cad = fila["Nombre"], int(fila["Stock"]), fila["Caducidad"]
     fecha_vence = datetime.strptime(cad, "%Y-%m-%d")
     hoy = datetime.now()
@@ -197,31 +196,35 @@ def dibujar_tarjeta(fila, index_original, key_tab):
         st.markdown(f'<div class="caja-info"><b>Principio Activo:</b> {p_act}<br><br><b>Descripción:</b> {d_uso}</div>', unsafe_allow_html=True)
 
     c1, c2, c3 = st.columns([2, 2, 1])
-    if c1.button(f"💊 QUITAR 1", key=f"q_{nombre}_{key_tab}"):
-        actualizar_actividad()
-        st.session_state.db_inventario[index_original]["Stock"] = max(0, stock - 1)
-        guardar_nube(st.session_state.db_inventario[index_original], "inventario")
-        
-        reg = {"Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"), "Persona": st.session_state.user, "Medicamento": nombre, "Movimiento": "RETIRADA (-1)"}
-        st.session_state.db_registro_fijo.append(reg)
-        guardar_nube(reg, "registros")
-        st.rerun()
+    
+    # Buscamos el índice real en session_state para evitar errores de índice desfasado
+    idx_real = next((i for i, item in enumerate(st.session_state.db_inventario) if item["Nombre"] == nombre), None)
 
-    if st.session_state.role == "admin":
-        if c2.button(f"➕ AÑADIR 1", key=f"a_{nombre}_{key_tab}"):
+    if idx_real is not None:
+        if c1.button(f"💊 QUITAR 1", key=f"q_{nombre}_{key_tab}"):
             actualizar_actividad()
-            st.session_state.db_inventario[index_original]["Stock"] = stock + 1
-            guardar_nube(st.session_state.db_inventario[index_original], "inventario")
-            
-            reg = {"Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"), "Persona": st.session_state.user, "Medicamento": nombre, "Movimiento": "ADICIÓN (+1)"}
+            st.session_state.db_inventario[idx_real]["Stock"] = max(0, stock - 1)
+            guardar_nube(st.session_state.db_inventario[idx_real], "inventario")
+            reg = {"Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"), "Persona": st.session_state.user, "Medicamento": nombre, "Movimiento": "RETIRADA (-1)"}
             st.session_state.db_registro_fijo.append(reg)
             guardar_nube(reg, "registros")
             st.rerun()
-        if c3.button("🗑", key=f"d_{nombre}_{key_tab}"):
-            actualizar_actividad()
-            borrar_nube(nombre, "inventario")
-            st.session_state.db_inventario.pop(index_original)
-            st.rerun()
+
+        if st.session_state.role == "admin":
+            if c2.button(f"➕ AÑADIR 1", key=f"a_{nombre}_{key_tab}"):
+                actualizar_actividad()
+                st.session_state.db_inventario[idx_real]["Stock"] = stock + 1
+                guardar_nube(st.session_state.db_inventario[idx_real], "inventario")
+                reg = {"Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"), "Persona": st.session_state.user, "Medicamento": nombre, "Movimiento": "ADICIÓN (+1)"}
+                st.session_state.db_registro_fijo.append(reg)
+                guardar_nube(reg, "registros")
+                st.rerun()
+                
+            if c3.button("🗑", key=f"d_{nombre}_{key_tab}"):
+                actualizar_actividad()
+                borrar_nube(nombre, "inventario")
+                st.session_state.db_inventario.pop(idx_real)
+                st.rerun()
 
 # --- 11. RENDER ---
 for i, t_nom in enumerate(titulos):
@@ -255,7 +258,7 @@ for i, t_nom in enumerate(titulos):
             
         else:
             filtro = "vitrina" if "Vitrina" in t_nom else "armario" if "Armario" in t_nom else ""
-            for idx, fila in df_master.iterrows():
-                if not df_vis[df_vis['Nombre'] == fila['Nombre']].empty:
-                    if not filtro or filtro in fila["Ubicacion"].lower():
-                        dibujar_tarjeta(fila, idx, i)
+            # Iteramos sobre el DataFrame filtrado visualmente
+            for _, fila in df_vis.iterrows():
+                if not filtro or filtro in fila["Ubicacion"].lower():
+                    dibujar_tarjeta(fila, i)
