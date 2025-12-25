@@ -4,3 +4,5 @@ pandas
 gspread
 google-auth
 streamlit-keyup
+google-oauth2
+google-cloud-firestore
