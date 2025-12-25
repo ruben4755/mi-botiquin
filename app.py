@@ -38,16 +38,11 @@ def cargar_nube(coleccion):
 def borrar_nube(doc_id, coleccion):
     db.collection(coleccion).document(str(doc_id)).delete()
 
-# --- 4. INICIALIZACIÓN DE DATOS (CORREGIDO PARA CARGA REAL) ---
-# Forzamos la carga desde la nube para que todos vean lo mismo que el admin
-if "db_inventario" not in st.session_state or st.sidebar.button("🔄 Actualizar Datos"):
-    st.session_state.db_inventario = cargar_nube("inventario")
-
-if "db_usuarios" not in st.session_state:
-    st.session_state.db_usuarios = cargar_nube("usuarios")
-
-if "db_registro_fijo" not in st.session_state:
-    st.session_state.db_registro_fijo = cargar_nube("registros")
+# --- 4. INICIALIZACIÓN DE DATOS (LECTURA REAL SIEMPRE) ---
+# Forzamos la carga desde la nube en cada ejecución para sincronizar a todos los usuarios
+st.session_state.db_inventario = cargar_nube("inventario")
+st.session_state.db_usuarios = cargar_nube("usuarios")
+st.session_state.db_registro_fijo = cargar_nube("registros")
 
 # --- 5. LÓGICA DE ACTIVIDAD ---
 if "last_activity" not in st.session_state:
