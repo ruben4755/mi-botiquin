@@ -195,7 +195,6 @@ def dibujar_tarjeta(fila, key_tab):
         p_act, d_uso = (info['p'], info['e']) if info else ("No disponible", "Sin datos.")
         st.markdown(f'<div class="caja-info"><b>Principio Activo:</b> {p_act}<br><br><b>Descripción:</b> {d_uso}</div>', unsafe_allow_html=True)
 
-    # Lógica de botones con restricción de Rol
     idx_real = next((i for i, item in enumerate(st.session_state.db_inventario) if item["Nombre"] == nombre), None)
 
     if idx_real is not None:
@@ -219,11 +218,15 @@ def dibujar_tarjeta(fila, key_tab):
                 st.rerun()
             if c3.button("🗑", key=f"d_{nombre}_{key_tab}"):
                 actualizar_actividad()
+                # --- REGISTRO DE ELIMINACIÓN ---
+                reg_del = {"Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"), "Persona": st.session_state.user, "Medicamento": nombre, "Movimiento": "ELIMINACIÓN TOTAL (PAPELERA)"}
+                st.session_state.db_registro_fijo.append(reg_del)
+                guardar_nube(reg_del, "registros")
+                
                 borrar_nube(nombre, "inventario")
                 st.session_state.db_inventario.pop(idx_real)
                 st.rerun()
         else:
-            # Si es usuario normal, solo el botón de quitar
             if st.button(f"💊 QUITAR 1", key=f"q_{nombre}_{key_tab}"):
                 actualizar_actividad()
                 st.session_state.db_inventario[idx_real]["Stock"] = max(0, stock - 1)
