@@ -28,7 +28,6 @@ else:
 
 # --- 3. FUNCIONES DE PERSISTENCIA EN NUBE ---
 def guardar_nube(item, coleccion):
-    # Usamos el nombre como ID único para evitar duplicados en inventario y usuarios
     doc_id = str(item.get("Nombre") or item.get("Usuario") or datetime.now().strftime("%Y%m%d%H%M%S%f"))
     db.collection(coleccion).document(doc_id).set(item)
 
@@ -43,7 +42,6 @@ def borrar_nube(doc_id, coleccion):
 if "db_inventario" not in st.session_state:
     datos_inv = cargar_nube("inventario")
     if not datos_inv:
-        # Carga inicial por defecto si la base de datos está vacía
         st.session_state.db_inventario = [
             {"Nombre": "PARACETAMOL", "Stock": 10, "Caducidad": "2026-01-01", "Ubicacion": "Medicación de vitrina"},
             {"Nombre": "IBUPROFENO", "Stock": 5, "Caducidad": "2025-12-01", "Ubicacion": "Medicación de armario"}
@@ -157,6 +155,12 @@ with st.sidebar:
                     item_nuevo = {"Nombre": n, "Stock": s, "Caducidad": str(f), "Ubicacion": u}
                     st.session_state.db_inventario.append(item_nuevo)
                     guardar_nube(item_nuevo, "inventario")
+                    
+                    # --- CORRECCIÓN REGISTRO FIJO AL ALTA ---
+                    reg_alta = {"Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"), "Persona": st.session_state.user, "Medicamento": n, "Movimiento": f"ALTA NUEVA ({s} uds)"}
+                    st.session_state.db_registro_fijo.append(reg_alta)
+                    guardar_nube(reg_alta, "registros")
+                    
                     st.success(f"{n} añadido."); time.sleep(0.5); st.rerun()
 
 # --- 9. BÚSQUEDA ---
