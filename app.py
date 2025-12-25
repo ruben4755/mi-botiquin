@@ -38,17 +38,10 @@ def cargar_nube(coleccion):
 def borrar_nube(doc_id, coleccion):
     db.collection(coleccion).document(str(doc_id)).delete()
 
-# --- 4. INICIALIZACIÓN DE DATOS DESDE LA NUBE ---
-if "db_inventario" not in st.session_state:
-    datos_inv = cargar_nube("inventario")
-    if not datos_inv:
-        st.session_state.db_inventario = [
-            {"Nombre": "PARACETAMOL", "Stock": 10, "Caducidad": "2026-01-01", "Ubicacion": "Medicación de vitrina"},
-            {"Nombre": "IBUPROFENO", "Stock": 5, "Caducidad": "2025-12-01", "Ubicacion": "Medicación de armario"}
-        ]
-        for m in st.session_state.db_inventario: guardar_nube(m, "inventario")
-    else:
-        st.session_state.db_inventario = datos_inv
+# --- 4. INICIALIZACIÓN DE DATOS (CORREGIDO PARA CARGA REAL) ---
+# Forzamos la carga desde la nube para que todos vean lo mismo que el admin
+if "db_inventario" not in st.session_state or st.sidebar.button("🔄 Actualizar Datos"):
+    st.session_state.db_inventario = cargar_nube("inventario")
 
 if "db_usuarios" not in st.session_state:
     st.session_state.db_usuarios = cargar_nube("usuarios")
@@ -218,11 +211,9 @@ def dibujar_tarjeta(fila, key_tab):
                 st.rerun()
             if c3.button("🗑", key=f"d_{nombre}_{key_tab}"):
                 actualizar_actividad()
-                # --- REGISTRO DE ELIMINACIÓN ---
                 reg_del = {"Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"), "Persona": st.session_state.user, "Medicamento": nombre, "Movimiento": "ELIMINACIÓN TOTAL (PAPELERA)"}
                 st.session_state.db_registro_fijo.append(reg_del)
                 guardar_nube(reg_del, "registros")
-                
                 borrar_nube(nombre, "inventario")
                 st.session_state.db_inventario.pop(idx_real)
                 st.rerun()
@@ -268,6 +259,9 @@ for i, t_nom in enumerate(titulos):
             
         else:
             filtro = "vitrina" if "Vitrina" in t_nom else "armario" if "Armario" in t_nom else ""
-            for _, fila in df_vis.iterrows():
-                if not filtro or filtro in fila["Ubicacion"].lower():
-                    dibujar_tarjeta(fila, i)
+            if not df_vis.empty:
+                for _, fila in df_vis.iterrows():
+                    if not filtro or filtro in fila["Ubicacion"].lower():
+                        dibujar_tarjeta(fila, i)
+            else:
+                st.info("No hay medicación disponible en este momento.")
