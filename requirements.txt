@@ -1,8 +1,9 @@
 streamlit
 
 pandas
-gspread
-google-auth
+requests
 streamlit-keyup
-google-oauth2
 google-cloud-firestore
+google-oauth2
+
+
