@@ -38,8 +38,7 @@ def cargar_nube(coleccion):
 def borrar_nube(doc_id, coleccion):
     db.collection(coleccion).document(str(doc_id)).delete()
 
-# --- 4. INICIALIZACIÓN DE DATOS (LECTURA REAL SIEMPRE) ---
-# Forzamos la carga desde la nube en cada ejecución para sincronizar a todos los usuarios
+# --- 4. INICIALIZACIÓN DE DATOS ---
 st.session_state.db_inventario = cargar_nube("inventario")
 st.session_state.db_usuarios = cargar_nube("usuarios")
 st.session_state.db_registro_fijo = cargar_nube("registros")
@@ -140,14 +139,20 @@ with st.sidebar:
             if st.form_submit_button("Registrar"):
                 actualizar_actividad()
                 if n:
-                    item_nuevo = {"Nombre": n, "Stock": s, "Caducidad": str(f), "Ubicacion": u}
+                    info_web = buscar_info_web(n)
+                    p_act = info_web['p'] if info_web else "No disponible"
+                    desc = info_web['e'] if info_web else "Sin datos."
+                    
+                    item_nuevo = {
+                        "Nombre": n, "Stock": s, "Caducidad": str(f), 
+                        "Ubicacion": u, "Principio": p_act, "Descripcion": desc
+                    }
                     st.session_state.db_inventario.append(item_nuevo)
                     guardar_nube(item_nuevo, "inventario")
                     
                     reg_alta = {"Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"), "Persona": st.session_state.user, "Medicamento": n, "Movimiento": f"ALTA NUEVA ({s} uds)"}
                     st.session_state.db_registro_fijo.append(reg_alta)
                     guardar_nube(reg_alta, "registros")
-                    
                     st.success(f"{n} añadido."); time.sleep(0.5); st.rerun()
 
 # --- 9. BÚSQUEDA ---
@@ -177,11 +182,25 @@ def dibujar_tarjeta(fila, key_tab):
     
     st.markdown(f'<div class="tarjeta-med" style="border-left-color: {col_borde}"><b>{nombre}</b><br><small>{stock} uds | {fila["Ubicacion"]} | Vence: {cad}</small></div>', unsafe_allow_html=True)
     
+    # Obtener info guardada o buscar si no existe
+    p_act = fila.get("Principio", "No disponible")
+    d_uso = fila.get("Descripcion", "Sin datos.")
+
     with st.expander("🤔 ¿Para qué sirve?"):
         actualizar_actividad()
-        info = buscar_info_web(nombre)
-        p_act, d_uso = (info['p'], info['e']) if info else ("No disponible", "Sin datos.")
-        st.markdown(f'<div class="caja-info"><b>Principio Activo:</b> {p_act}<br><br><b>Descripción:</b> {d_uso}</div>', unsafe_allow_html=True)
+        if st.session_state.role == "admin":
+            with st.form(f"edit_info_{nombre}_{key_tab}"):
+                nuevo_p = st.text_input("Principio Activo", p_act)
+                nueva_d = st.text_area("Descripción/Uso", d_uso)
+                if st.form_submit_button("💾 Guardar Cambios"):
+                    idx_real = next((i for i, item in enumerate(st.session_state.db_inventario) if item["Nombre"] == nombre), None)
+                    if idx_real is not None:
+                        st.session_state.db_inventario[idx_real]["Principio"] = nuevo_p
+                        st.session_state.db_inventario[idx_real]["Descripcion"] = nueva_d
+                        guardar_nube(st.session_state.db_inventario[idx_real], "inventario")
+                        st.success("Info actualizada"); time.sleep(0.5); st.rerun()
+        else:
+            st.markdown(f'<div class="caja-info"><b>Principio Activo:</b> {p_act}<br><br><b>Descripción:</b> {d_uso}</div>', unsafe_allow_html=True)
 
     idx_real = next((i for i, item in enumerate(st.session_state.db_inventario) if item["Nombre"] == nombre), None)
 
@@ -189,7 +208,6 @@ def dibujar_tarjeta(fila, key_tab):
         if st.session_state.role == "admin":
             c1, c2, c3 = st.columns([2, 2, 1])
             if c1.button(f"💊 QUITAR 1", key=f"q_{nombre}_{key_tab}"):
-                actualizar_actividad()
                 st.session_state.db_inventario[idx_real]["Stock"] = max(0, stock - 1)
                 guardar_nube(st.session_state.db_inventario[idx_real], "inventario")
                 reg = {"Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"), "Persona": st.session_state.user, "Medicamento": nombre, "Movimiento": "RETIRADA (-1)"}
@@ -197,7 +215,6 @@ def dibujar_tarjeta(fila, key_tab):
                 guardar_nube(reg, "registros")
                 st.rerun()
             if c2.button(f"➕ AÑADIR 1", key=f"a_{nombre}_{key_tab}"):
-                actualizar_actividad()
                 st.session_state.db_inventario[idx_real]["Stock"] = stock + 1
                 guardar_nube(st.session_state.db_inventario[idx_real], "inventario")
                 reg = {"Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"), "Persona": st.session_state.user, "Medicamento": nombre, "Movimiento": "ADICIÓN (+1)"}
@@ -205,8 +222,7 @@ def dibujar_tarjeta(fila, key_tab):
                 guardar_nube(reg, "registros")
                 st.rerun()
             if c3.button("🗑", key=f"d_{nombre}_{key_tab}"):
-                actualizar_actividad()
-                reg_del = {"Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"), "Persona": st.session_state.user, "Medicamento": nombre, "Movimiento": "ELIMINACIÓN TOTAL (PAPELERA)"}
+                reg_del = {"Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"), "Persona": st.session_state.user, "Medicamento": nombre, "Movimiento": "ELIMINACIÓN TOTAL"}
                 st.session_state.db_registro_fijo.append(reg_del)
                 guardar_nube(reg_del, "registros")
                 borrar_nube(nombre, "inventario")
@@ -214,7 +230,6 @@ def dibujar_tarjeta(fila, key_tab):
                 st.rerun()
         else:
             if st.button(f"💊 QUITAR 1", key=f"q_{nombre}_{key_tab}"):
-                actualizar_actividad()
                 st.session_state.db_inventario[idx_real]["Stock"] = max(0, stock - 1)
                 guardar_nube(st.session_state.db_inventario[idx_real], "inventario")
                 reg = {"Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"), "Persona": st.session_state.user, "Medicamento": nombre, "Movimiento": "RETIRADA (-1)"}
@@ -230,7 +245,6 @@ for i, t_nom in enumerate(titulos):
                 nu, np, nr = st.columns(3)
                 u_in, p_in, r_in = nu.text_input("Usuario"), np.text_input("Clave"), nr.selectbox("Rol", ["user", "admin"])
                 if st.form_submit_button("Crear"):
-                    actualizar_actividad()
                     nuevo_u = {"Usuario": u_in, "Clave": p_in, "Rol": r_in}
                     st.session_state.db_usuarios.append(nuevo_u)
                     guardar_nube(nuevo_u, "usuarios"); st.rerun()
@@ -238,18 +252,14 @@ for i, t_nom in enumerate(titulos):
                 col1, col2 = st.columns([4, 1])
                 col1.write(f"👤 {user['Usuario']} ({user['Rol']})")
                 if col2.button("Borrar", key=f"u_{idx}"):
-                    actualizar_actividad()
                     borrar_nube(user['Usuario'], "usuarios")
                     st.session_state.db_usuarios.pop(idx); st.rerun()
         
         elif t_nom == "📜 Registro Fijo":
-            actualizar_actividad()
             st.subheader("📋 Registro Histórico (Firestore)")
             if st.session_state.db_registro_fijo:
                 df_reg = pd.DataFrame(st.session_state.db_registro_fijo)
-                for col in ["Fecha", "Persona", "Medicamento", "Movimiento"]:
-                    if col not in df_reg.columns: df_reg[col] = "N/A"
-                st.dataframe(df_reg[["Fecha", "Persona", "Medicamento", "Movimiento"]].iloc[::-1], use_container_width=True, hide_index=True)
+                st.dataframe(df_reg.iloc[::-1], use_container_width=True, hide_index=True)
             else: st.info("No hay registros aún.")
             
         else:
@@ -259,4 +269,4 @@ for i, t_nom in enumerate(titulos):
                     if not filtro or filtro in fila["Ubicacion"].lower():
                         dibujar_tarjeta(fila, i)
             else:
-                st.info("No hay medicación disponible en este momento.")
+                st.info("No hay medicación disponible.")
