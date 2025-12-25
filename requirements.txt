@@ -1,9 +1,8 @@
 streamlit
-
 pandas
 requests
 streamlit-keyup
 google-cloud-firestore
-google-oauth2
-
-
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
