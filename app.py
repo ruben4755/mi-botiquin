@@ -76,30 +76,34 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 6. MOTOR MÉDICO (AEMPS) ---
+# --- 6. MOTOR MÉDICO PROFESIONAL (AEMPS) ---
 def traducir_a_coloquial(nombre_tecnico):
-    nombre_tecnico = (nombre_tecnico or "").lower()
-    mapeo = {
-        "analgésicos": "Para quitar dolores (cabeza, cuerpo, espalda).",
-        "antipiréticos": "Para bajar la fiebre.",
-        "antiinflamatorios": "Para bajar la hinchazón y el dolor.",
-        "protones": "Protector de estómago."
-    }
-    for clave, explicacion in mapeo.items():
-        if clave in nombre_tecnico: return explicacion
-    return f"Uso: {nombre_tecnico.capitalize()}."
+    # Función mantenida por compatibilidad de estructura, pero mejorada
+    return f"Indicación clínica: {nombre_tecnico.capitalize()}."
 
 @st.cache_data(ttl=604800)
 def buscar_info_web(nombre):
     try:
+        # Búsqueda profesional por nombre comercial o principio
         n_bus = nombre.split()[0].strip()
         res = requests.get(f"https://cima.aemps.es/cima/rest/medicamentos?nombre={n_bus}", timeout=5).json()
         if res.get('resultados'):
+            # Tomamos el primer resultado clínico verificado
             m = res['resultados'][0]
-            det = requests.get(f"https://cima.aemps.es/cima/rest/medicamento?nregistro={m['nregistro']}").json()
+            n_registro = m['nregistro']
+            det = requests.get(f"https://cima.aemps.es/cima/rest/medicamento?nregistro={n_registro}").json()
+            
+            # Extraer Principios Activos de forma profesional
+            pas = [p['nombre'] for p in det.get('principiosActivos', [])]
+            p_final = ", ".join(pas).capitalize() if pas else "No especificado"
+            
+            # Extraer Clasificación Terapéutica ATC (Mucho más profesional)
+            atcs = det.get('atcs', [])
+            uso_profesional = atcs[-1]['nombre'] if atcs else "Uso clínico general"
+            
             return {
-                "p": m.get('principiosActivos', [{'nombre': 'Desconocido'}])[0]['nombre'].capitalize(), 
-                "e": traducir_a_coloquial(det.get('atcs', [{'nombre': 'Uso general'}])[0]['nombre'])
+                "p": p_final, 
+                "e": f"Clasificación farmacológica: {uso_profesional}"
             }
     except: return None
     return None
@@ -113,13 +117,11 @@ if not st.session_state.logueado:
         u, p = st.text_input("Usuario"), st.text_input("Contraseña", type="password")
         if st.form_submit_button("Entrar"):
             actualizar_actividad()
-            # Corrección línea 64: Verificación segura de secrets
             users_dict = st.secrets.get("users", {})
             if u in users_dict and str(p) == str(users_dict[u]):
                 st.session_state.update({"logueado": True, "user": u, "role": "admin"})
                 st.rerun()
             else:
-                # Corrección línea 72: Verificación de lista de usuarios
                 user_data = next((item for item in st.session_state.db_usuarios if str(item.get("Usuario")) == str(u) and str(item.get("Clave")) == str(p)), None)
                 if user_data:
                     st.session_state.update({"logueado": True, "user": u, "role": user_data["Rol"]})
@@ -182,19 +184,16 @@ tabs = st.tabs(titulos)
 # --- 10. FUNCIÓN TARJETA (CORREGIDO LÍNEA 151, 153, 157) ---
 def dibujar_tarjeta(fila, key_tab):
     nombre, stock, cad = fila["Nombre"], int(fila["Stock"]), fila["Caducidad"]
-    # Corrección línea 151 y 153: Manejo de formato de fecha
     try:
         fecha_vence = datetime.strptime(cad, "%Y-%m-%d")
     except:
         fecha_vence = datetime.now()
         
     hoy = datetime.now()
-    # Corrección línea 157: Comparación de fechas
     col_borde = "#ff4b4b" if fecha_vence.date() < hoy.date() else "#ffcc00" if fecha_vence.date() <= (hoy + timedelta(days=30)).date() else "#28a745"
     
     st.markdown(f'<div class="tarjeta-med" style="border-left-color: {col_borde}"><b>{nombre}</b><br><small>{stock} uds | {fila["Ubicacion"]} | Vence: {cad}</small></div>', unsafe_allow_html=True)
     
-    # Obtener info guardada o buscar si no existe
     p_act = fila.get("Principio", "No disponible")
     d_uso = fila.get("Descripcion", "Sin datos.")
 
@@ -260,7 +259,6 @@ for i, t_nom in enumerate(titulos):
                     nuevo_u = {"Usuario": u_in, "Clave": p_in, "Rol": r_in}
                     st.session_state.db_usuarios.append(nuevo_u)
                     guardar_nube(nuevo_u, "usuarios"); st.rerun()
-            # Corrección línea 199: Uso de list() para evitar errores al modificar la lista mientras se itera
             for idx, user in enumerate(list(st.session_state.db_usuarios)):
                 col1, col2 = st.columns([4, 1])
                 col1.write(f"👤 {user['Usuario']} ({user['Rol']})")
