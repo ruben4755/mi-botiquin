@@ -38,10 +38,13 @@ def cargar_nube(coleccion):
 def borrar_nube(doc_id, coleccion):
     db.collection(coleccion).document(str(doc_id)).delete()
 
-# --- 4. INICIALIZACIÓN DE DATOS ---
-st.session_state.db_inventario = cargar_nube("inventario")
-st.session_state.db_usuarios = cargar_nube("usuarios")
-st.session_state.db_registro_fijo = cargar_nube("registros")
+# --- 4. INICIALIZACIÓN DE DATOS (CORREGIDO LÍNEA 32) ---
+if "db_inventario" not in st.session_state:
+    st.session_state.db_inventario = cargar_nube("inventario")
+if "db_usuarios" not in st.session_state:
+    st.session_state.db_usuarios = cargar_nube("usuarios")
+if "db_registro_fijo" not in st.session_state:
+    st.session_state.db_registro_fijo = cargar_nube("registros")
 
 # --- 5. LÓGICA DE ACTIVIDAD ---
 if "last_activity" not in st.session_state:
@@ -101,7 +104,7 @@ def buscar_info_web(nombre):
     except: return None
     return None
 
-# --- 7. LOGIN ---
+# --- 7. LOGIN (CORREGIDO LÍNEA 64 Y 72) ---
 if "logueado" not in st.session_state: st.session_state.logueado = False
 
 if not st.session_state.logueado:
@@ -110,11 +113,14 @@ if not st.session_state.logueado:
         u, p = st.text_input("Usuario"), st.text_input("Contraseña", type="password")
         if st.form_submit_button("Entrar"):
             actualizar_actividad()
-            if u in st.secrets.get("users", {}) and str(p) == str(st.secrets["users"][u]):
+            # Corrección línea 64: Verificación segura de secrets
+            users_dict = st.secrets.get("users", {})
+            if u in users_dict and str(p) == str(users_dict[u]):
                 st.session_state.update({"logueado": True, "user": u, "role": "admin"})
                 st.rerun()
             else:
-                user_data = next((item for item in st.session_state.db_usuarios if str(item["Usuario"]) == str(u) and str(item["Clave"]) == str(p)), None)
+                # Corrección línea 72: Verificación de lista de usuarios
+                user_data = next((item for item in st.session_state.db_usuarios if str(item.get("Usuario")) == str(u) and str(item.get("Clave")) == str(p)), None)
                 if user_data:
                     st.session_state.update({"logueado": True, "user": u, "role": user_data["Rol"]})
                     st.rerun()
@@ -166,19 +172,25 @@ df_master = pd.DataFrame(st.session_state.db_inventario)
 df_vis = df_master.copy()
 if raw_query and not df_vis.empty:
     q = normalize(raw_query)
-    df_vis = df_vis[df_vis.apply(lambda r: q in normalize(r["Nombre"]) or q in normalize(r["Ubicacion"]), axis=1)]
+    df_vis = df_vis[df_vis.apply(lambda r: q in normalize(str(r["Nombre"])) or q in normalize(str(r["Ubicacion"])), axis=1)]
 
 # TABS
 titulos = ["📋 Todo", "💊 Vitrina", "📦 Armario"]
 if st.session_state.role == "admin": titulos.extend(["👥 Usuarios", "📜 Registro Fijo"])
 tabs = st.tabs(titulos)
 
-# --- 10. FUNCIÓN TARJETA ---
+# --- 10. FUNCIÓN TARJETA (CORREGIDO LÍNEA 151, 153, 157) ---
 def dibujar_tarjeta(fila, key_tab):
     nombre, stock, cad = fila["Nombre"], int(fila["Stock"]), fila["Caducidad"]
-    fecha_vence = datetime.strptime(cad, "%Y-%m-%d")
+    # Corrección línea 151 y 153: Manejo de formato de fecha
+    try:
+        fecha_vence = datetime.strptime(cad, "%Y-%m-%d")
+    except:
+        fecha_vence = datetime.now()
+        
     hoy = datetime.now()
-    col_borde = "#ff4b4b" if fecha_vence < hoy else "#ffcc00" if fecha_vence <= hoy + timedelta(days=30) else "#28a745"
+    # Corrección línea 157: Comparación de fechas
+    col_borde = "#ff4b4b" if fecha_vence.date() < hoy.date() else "#ffcc00" if fecha_vence.date() <= (hoy + timedelta(days=30)).date() else "#28a745"
     
     st.markdown(f'<div class="tarjeta-med" style="border-left-color: {col_borde}"><b>{nombre}</b><br><small>{stock} uds | {fila["Ubicacion"]} | Vence: {cad}</small></div>', unsafe_allow_html=True)
     
@@ -237,7 +249,7 @@ def dibujar_tarjeta(fila, key_tab):
                 guardar_nube(reg, "registros")
                 st.rerun()
 
-# --- 11. RENDER ---
+# --- 11. RENDER (CORREGIDO LÍNEA 199) ---
 for i, t_nom in enumerate(titulos):
     with tabs[i]:
         if t_nom == "👥 Usuarios":
@@ -248,7 +260,8 @@ for i, t_nom in enumerate(titulos):
                     nuevo_u = {"Usuario": u_in, "Clave": p_in, "Rol": r_in}
                     st.session_state.db_usuarios.append(nuevo_u)
                     guardar_nube(nuevo_u, "usuarios"); st.rerun()
-            for idx, user in enumerate(st.session_state.db_usuarios):
+            # Corrección línea 199: Uso de list() para evitar errores al modificar la lista mientras se itera
+            for idx, user in enumerate(list(st.session_state.db_usuarios)):
                 col1, col2 = st.columns([4, 1])
                 col1.write(f"👤 {user['Usuario']} ({user['Rol']})")
                 if col2.button("Borrar", key=f"u_{idx}"):
